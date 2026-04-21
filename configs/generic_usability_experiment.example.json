@@ -1,0 +1,85 @@
+{
+  "experiment_name": "generic_checkout_study",
+  "start_url": "https://example.com",
+  "tasks": [
+    "Find the target product",
+    "Add the product to the cart",
+    "Update quantity if needed",
+    "Proceed to checkout"
+  ],
+  "success_criteria": {
+    "url_contains": [
+      "/checkout",
+      "/payment"
+    ],
+    "text_contains": [
+      "Checkout",
+      "Payment",
+      "Order Summary"
+    ]
+  },
+  "max_steps": 25,
+  "click_timeout_ms": 5000,
+  "runs_per_persona": 4,
+  "output_file": "output/generic_usability_results.csv",
+  "model": "gpt-4o",
+  "run_timeout_s": 120,
+  "sleep_scale": 0.6,
+  "hydrate_timeout_ms": 45000,
+  "observation_char_limit": 2500,
+  "candidate_limits": {
+    "click": 12,
+    "input": 8,
+    "select": 4
+  },
+  "test_data": {
+    "full_name": "Jordan Lee",
+    "first_name": "Jordan",
+    "last_name": "Lee",
+    "email": "jordan.lee@example.com",
+    "phone": "555-010-2458",
+    "address1": "123 Research Ave",
+    "address2": "Suite 400",
+    "city": "Austin",
+    "state": "Texas",
+    "postal_code": "78701",
+    "notes": "Usability test participant"
+  },
+  "task_search_hint": "target product name",
+  "site_hints": {
+    "prefer_labels": [
+      "search",
+      "add to cart",
+      "checkout"
+    ],
+    "avoid_labels": [
+      "delete",
+      "remove",
+      "sign out",
+      "cancel order"
+    ]
+  },
+  "personas": [
+    {
+      "name": "busy_commuter",
+      "exploration": 0.2,
+      "patience": 0.4,
+      "attention": 0.3,
+      "error_rate": 0.4
+    },
+    {
+      "name": "budget_student",
+      "exploration": 0.5,
+      "patience": 0.8,
+      "attention": 0.7,
+      "error_rate": 0.2
+    },
+    {
+      "name": "first_time_user",
+      "exploration": 0.4,
+      "patience": 0.6,
+      "attention": 0.5,
+      "error_rate": 0.6
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
+
+# Local environment / secrets
+.env
+
+# Runtime outputs
+output/*.csv
+output/*.log
+output/*.jsonl
+!output/.gitkeep
+
+# Optional per-study local configs can be ignored if needed.
+# configs/generic_usability_experiment.json
