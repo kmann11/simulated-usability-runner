@@ -1,0 +1,58 @@
+name: Validate simulated usability runner
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Validate config and notebook JSON
+        run: |
+          python -m json.tool configs/generic_usability_experiment.json > /dev/null
+          python -m json.tool configs/generic_usability_experiment.example.json > /dev/null
+          python -m json.tool notebooks/generic_usability_runner.ipynb > /dev/null
+
+      - name: Check Python imports and config loading
+        run: |
+          python -m compileall app scripts
+          python -c "from scripts.generic_usability_runner import load_config; c = load_config('configs/generic_usability_experiment.json'); print(c['experiment_name'], c['start_url'], c['output_file'])"
+          python -c "from scripts.generic_usability_shell import build_generic_jupyter_form; print('form import ok')"
+
+      - name: Launch Playwright browser
+        run: python -c "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); b = p.chromium.launch(headless=True); page = b.new_page(); page.goto('data:text/html,<h1>ok</h1>'); print(page.locator('h1').inner_text()); b.close(); p.stop()"
+
+      - name: Run local fixture smoke benchmark
+        run: python scripts/generic_usability_stress.py --output-prefix validation_smoke --runs-per-persona 1
+
+      - name: Upload validation CSVs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-output
+          path: |
+            output/validation_smoke_raw.csv
+            output/validation_smoke_summary.csv
+          if-no-files-found: warn

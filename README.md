@@ -75,6 +75,37 @@ python3 -m playwright install chromium
 
 If the team is running this in EGAP JupyterHub, use the standard environment if one is provided. Otherwise, the venv setup above works.
 
+## Validate With GitHub Actions
+
+This repo includes an Actions workflow at:
+
+```text
+.github/workflows/validation.yml
+```
+
+GitHub runs it on every push, every pull request, and any manual run from the Actions tab.
+
+What it validates:
+
+- installs the repo dependencies
+- installs Playwright Chromium
+- checks the active config, example config, and notebook JSON
+- compiles the Python modules
+- imports the runner and Jupyter form shell
+- launches a real headless Chromium browser through Playwright
+- runs the local fixture smoke benchmark
+- uploads the validation CSVs as a workflow artifact
+
+To run it manually in GitHub:
+
+1. Open the repo in GitHub.
+2. Click **Actions**.
+3. Select **Validate simulated usability runner**.
+4. Click **Run workflow**.
+5. Open the finished run and download the **validation-output** artifact if you want the CSVs.
+
+This validates the runner in batch mode. It does not replace the Jupyter form, which is still the cleanest team-facing way to configure and launch a study interactively.
+
 ## Configure a Study
 
 The active config is:
