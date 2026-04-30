@@ -10,7 +10,7 @@ import os
 import random
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -132,6 +132,12 @@ CLICK_ACTIONS = {"click", "type", "select"}
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 CLIENT = OpenAI(api_key=OPENAI_API_KEY) if OpenAI and OPENAI_API_KEY else None
+ProgressCallback = Callable[[dict[str, Any]], None]
+CancelCallback = Callable[[], bool]
+
+
+def cancel_requested(callback: CancelCallback | None) -> bool:
+    return bool(callback and callback())
 
 
 def recursive_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -819,7 +825,13 @@ async def perform_action(page, action: str, config: dict[str, Any]) -> bool:
     return False
 
 
-async def run_user(page, persona: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+async def run_user(
+    page,
+    persona: dict[str, Any],
+    config: dict[str, Any],
+    artifact_dir: Path | None = None,
+    should_cancel: CancelCallback | None = None,
+) -> dict[str, Any]:
     behavior = vary_behavior(persona)
     nav_path: list[str] = []
     semantic_path: list[str] = []
@@ -828,6 +840,9 @@ async def run_user(page, persona: dict[str, Any], config: dict[str, Any]) -> dic
     misclick = 0
     backtrack = 0
     abandoned = False
+    cancelled = False
+    capture_screenshots = bool(config.get("capture_screenshots", False))
+    artifacts: list[dict[str, Any]] = []
 
     page.set_default_timeout(int(config["click_timeout_ms"]))
     await page.goto(config["start_url"], timeout=30000, wait_until="domcontentloaded")
@@ -838,24 +853,50 @@ async def run_user(page, persona: dict[str, Any], config: dict[str, Any]) -> dic
     visited_urls = [initial_observation["url"]]
 
     for _ in range(int(config["max_steps"])):
+        if cancel_requested(should_cancel):
+            cancelled = True
+            abandoned = True
+            break
+
         observation = await capture_observation(page, config)
         if observation["success_reached"]:
             break
 
         pre_signature = observation_signature(observation)
         action = ai_decide(observation, behavior, nav_path, config)
+        step_index = len(nav_path)
         nav_path.append(action)
         semantic_path.append(action)
 
         if action == "done":
             abandoned = not observation["success_reached"]
+            artifact = await _build_step_artifact(
+                page=page,
+                step_index=step_index,
+                persona=persona,
+                observation=observation,
+                action=action,
+                status="abandoned" if abandoned else "completed",
+                notes=[],
+                artifact_dir=artifact_dir if capture_screenshots else None,
+            )
+            artifacts.append(artifact)
+            break
+
+        if cancel_requested(should_cancel):
+            cancelled = True
+            abandoned = True
             break
 
         action_failed = not await perform_action(page, action, config)
+        step_notes: list[str] = []
         if action == "wait":
             hesitation += 1
+            step_notes.append("hesitation_wait")
         elif action_failed:
             misclick += 1
+            step_notes.append("step_error")
+            step_notes.append("misclick")
 
         post_observation = await capture_observation(page, config)
         post_signature = observation_signature(post_observation)
@@ -865,12 +906,33 @@ async def run_user(page, persona: dict[str, Any], config: dict[str, Any]) -> dic
             len(visited_urls) >= 3 and visited_urls[-1] == visited_urls[-3] and visited_urls[-1] != visited_urls[-2]
         ):
             backtrack += 1
+            step_notes.append("navigated_back")
         elif post_signature in state_history[:-1] and post_signature != pre_signature:
             backtrack += 1
+            step_notes.append("loop_to_prior_state")
         elif action.startswith("click[") and not action_failed and post_signature == pre_signature:
             misclick += 1
+            step_notes.append("misclick")
+            step_notes.append("no_visible_change_after_click")
 
         state_history.append(post_signature)
+
+        artifact = await _build_step_artifact(
+            page=page,
+            step_index=step_index,
+            persona=persona,
+            observation=post_observation,
+            action=action,
+            status="error" if action_failed else "completed",
+            notes=step_notes,
+            artifact_dir=artifact_dir if capture_screenshots else None,
+        )
+        artifacts.append(artifact)
+
+        if cancel_requested(should_cancel):
+            cancelled = True
+            abandoned = True
+            break
 
         if post_observation["success_reached"]:
             abandoned = False
@@ -881,6 +943,16 @@ async def run_user(page, persona: dict[str, Any], config: dict[str, Any]) -> dic
     final_observation = await capture_observation(page, config)
     if final_observation["success_reached"]:
         abandoned = False
+
+    # Stamp the run-level outcome onto the final artifact so consumers can tell
+    # whether this session as a whole completed, was abandoned, or errored.
+    if artifacts:
+        final_status = (
+            "abandoned"
+            if abandoned
+            else ("error" if any(a["status"] == "error" for a in artifacts) else "completed")
+        )
+        artifacts[-1] = {**artifacts[-1], "session_status": final_status}
 
     return {
         "experiment_name": config["experiment_name"],
@@ -894,7 +966,87 @@ async def run_user(page, persona: dict[str, Any], config: dict[str, Any]) -> dic
         "nav_path": " -> ".join(nav_path),
         "semantic_path": " -> ".join(semantic_path),
         "timestamp": dt.datetime.now().isoformat(),
+        "artifacts": artifacts,
+        "cancelled": cancelled,
     }
+
+
+async def _build_step_artifact(
+    page,
+    step_index: int,
+    persona: dict[str, Any],
+    observation: dict[str, Any],
+    action: str,
+    status: str,
+    notes: list[str],
+    artifact_dir: Path | None,
+) -> dict[str, Any]:
+    """Bundle the data the heuristic review layer needs from one step.
+
+    Screenshot capture is best-effort — if it fails (page closed, navigation
+    in flight, etc.) we just skip it. The runner shouldn't crash because
+    Playwright couldn't take a picture.
+    """
+    visible_labels: list[str] = []
+    for candidate in observation.get("click_candidates", []) or []:
+        label = (candidate.get("label") or "").strip()
+        if label:
+            visible_labels.append(label)
+    for candidate in observation.get("select_candidates", []) or []:
+        label = (candidate.get("label") or "").strip()
+        if label:
+            visible_labels.append(label)
+
+    headings = observation.get("headings", []) or []
+    title = observation.get("title", "") or ""
+    summary_chunks: list[str] = []
+    if title:
+        summary_chunks.append(title)
+    if headings:
+        summary_chunks.append(" / ".join(headings[:3]))
+    body_excerpt = (observation.get("main_text") or "")[:240]
+    if body_excerpt:
+        summary_chunks.append(body_excerpt)
+    dom_summary = " — ".join(chunk for chunk in summary_chunks if chunk)
+
+    screenshot_path: str | None = None
+    if artifact_dir is not None:
+        screenshot_path = await _capture_screenshot(page, artifact_dir, persona["name"], step_index)
+
+    return {
+        "step_index": step_index,
+        "persona": persona["name"],
+        "url": observation.get("url", ""),
+        "action": action,
+        "status": status,
+        "screenshot_path": screenshot_path,
+        "dom_summary": dom_summary,
+        "visible_labels": visible_labels[:24],
+        "notes": notes,
+    }
+
+
+async def _capture_screenshot(
+    page,
+    artifact_dir: Path,
+    persona_name: str,
+    step_index: int,
+) -> str | None:
+    safe_persona = re.sub(r"[^A-Za-z0-9_\-]+", "_", persona_name) or "persona"
+    persona_dir = artifact_dir / safe_persona
+    persona_dir.mkdir(parents=True, exist_ok=True)
+    target = persona_dir / f"step_{step_index:02d}.png"
+    try:
+        await page.screenshot(path=str(target), full_page=False, timeout=5000)
+    except Exception:  # pragma: no cover - best-effort capture
+        return None
+    try:
+        return str(target.relative_to(WORKSPACE_ROOT))
+    except ValueError:
+        return str(target)
+
+
+WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 
 
 async def main(config_path: str | None) -> None:
@@ -906,7 +1058,11 @@ async def main(config_path: str | None) -> None:
     print(f"Wrote results to {config['output_file']}", flush=True)
 
 
-async def run_experiment(config: dict[str, Any]) -> list[dict[str, Any]]:
+async def run_experiment(
+    config: dict[str, Any],
+    progress_callback: ProgressCallback | None = None,
+    should_cancel: CancelCallback | None = None,
+) -> list[dict[str, Any]]:
     output_file = Path(config["output_file"])
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -928,18 +1084,92 @@ async def run_experiment(config: dict[str, Any]) -> list[dict[str, Any]]:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
 
+    capture_screenshots = bool(config.get("capture_screenshots", False))
+    run_dir: Path | None = None
+    total_sessions = max(1, len(config["personas"]) * int(config["runs_per_persona"]))
+
+    def emit_progress(**event: Any) -> None:
+        if progress_callback is None:
+            return
+        progress_callback(
+            {
+                "total_sessions": total_sessions,
+                **event,
+            }
+        )
+
+    emit_progress(
+        phase="starting",
+        completed_sessions=0,
+        message="Starting the browser and getting the run ready.",
+    )
+
+    if capture_screenshots:
+        run_stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_name = re.sub(r"[^A-Za-z0-9_\-]+", "_", config["experiment_name"]) or "run"
+        run_dir = WORKSPACE_ROOT / "output" / "runs" / f"{run_stamp}_{safe_name}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+    sessions: list[tuple[str, list[dict[str, Any]]]] = []
+
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=True)
+        emit_progress(
+            phase="browser_ready",
+            completed_sessions=0,
+            message="Browser ready. Starting the walkthroughs.",
+        )
+        session_counter = 0
+        stop_after_current = False
         for persona in config["personas"]:
+            if cancel_requested(should_cancel):
+                stop_after_current = True
+                emit_progress(
+                    phase="cancelling",
+                    completed_sessions=len(sessions),
+                    message="Stopping the run after the current work finishes.",
+                )
+                break
             for run_number in range(int(config["runs_per_persona"])):
+                if cancel_requested(should_cancel):
+                    stop_after_current = True
+                    emit_progress(
+                        phase="cancelling",
+                        completed_sessions=len(sessions),
+                        message="Stopping the run after the current work finishes.",
+                    )
+                    break
+                session_counter += 1
                 page = await browser.new_page()
+                emit_progress(
+                    phase="session_started",
+                    completed_sessions=session_counter - 1,
+                    current_session=session_counter,
+                    current_persona=persona["name"],
+                    current_run_number=run_number + 1,
+                    message=(
+                        f"Running {persona['name']} "
+                        f"({session_counter} of {total_sessions})."
+                    ),
+                )
                 print(
                     f"Running {persona['name']} run {run_number + 1}/{config['runs_per_persona']}",
                     flush=True,
                 )
+                artifact_dir = None
+                if run_dir is not None:
+                    artifact_dir = run_dir / f"run_{run_number + 1:02d}"
+                    artifact_dir.mkdir(parents=True, exist_ok=True)
+
                 try:
                     result = await asyncio.wait_for(
-                        run_user(page, persona, config),
+                        run_user(
+                            page,
+                            persona,
+                            config,
+                            artifact_dir=artifact_dir,
+                            should_cancel=should_cancel,
+                        ),
                         timeout=int(config["run_timeout_s"]),
                     )
                 except asyncio.TimeoutError:
@@ -955,6 +1185,8 @@ async def run_experiment(config: dict[str, Any]) -> list[dict[str, Any]]:
                         "nav_path": "error:Timeout",
                         "semantic_path": "error",
                         "timestamp": dt.datetime.now().isoformat(),
+                        "artifacts": [],
+                        "cancelled": False,
                     }
                 except (PlaywrightError, PlaywrightTimeoutError) as exc:
                     result = {
@@ -969,11 +1201,28 @@ async def run_experiment(config: dict[str, Any]) -> list[dict[str, Any]]:
                         "nav_path": f"error:{type(exc).__name__}",
                         "semantic_path": "error",
                         "timestamp": dt.datetime.now().isoformat(),
+                        "artifacts": [],
+                        "cancelled": False,
                     }
 
+                # Persist CSV row (without the artifacts payload — that lives in JSON only).
+                csv_row = {key: result[key] for key in fieldnames}
                 with output_file.open("a", newline="") as handle:
                     writer = csv.DictWriter(handle, fieldnames=fieldnames)
-                    writer.writerow(result)
+                    writer.writerow(csv_row)
+
+                sessions.append((persona["name"], result.get("artifacts", []) or []))
+                emit_progress(
+                    phase="session_completed",
+                    completed_sessions=session_counter,
+                    current_session=session_counter,
+                    current_persona=persona["name"],
+                    current_run_number=run_number + 1,
+                    message=(
+                        f"Completed {persona['name']} "
+                        f"({session_counter} of {total_sessions})."
+                    ),
+                )
 
                 print(
                     f"Completed {persona['name']} run {run_number + 1}/{config['runs_per_persona']}: "
@@ -982,10 +1231,41 @@ async def run_experiment(config: dict[str, Any]) -> list[dict[str, Any]]:
                 )
                 await page.close()
                 await asyncio.sleep(scaled_sleep(config, 0.5, 1.0))
+                if result.get("cancelled") or cancel_requested(should_cancel):
+                    stop_after_current = True
+                    emit_progress(
+                        phase="cancelling",
+                        completed_sessions=len(sessions),
+                        current_session=session_counter,
+                        current_persona=persona["name"],
+                        current_run_number=run_number + 1,
+                        message="Stopping the run and packaging what has completed so far.",
+                    )
+                    break
+            if stop_after_current:
+                break
         await browser.close()
 
+    emit_progress(
+        phase="finishing" if not cancel_requested(should_cancel) else "cancelling",
+        completed_sessions=len(sessions),
+        current_session=len(sessions),
+        message=(
+            "Compiling the results."
+            if not cancel_requested(should_cancel)
+            else "Stopping the run and compiling the completed sessions."
+        ),
+    )
+
     with output_file.open() as handle:
-        return list(csv.DictReader(handle))
+        rows = list(csv.DictReader(handle))
+
+    # Tack the per-session artifact bundles onto the returned rows. The CSV
+    # schema is unchanged; consumers that don't care can ignore the extra key.
+    for row, (_, artifacts) in zip(rows, sessions):
+        row["_artifacts"] = artifacts
+
+    return rows
 
 
 if __name__ == "__main__":

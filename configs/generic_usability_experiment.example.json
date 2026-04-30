@@ -1,21 +1,22 @@
 {
-  "experiment_name": "generic_checkout_study",
+  "experiment_name": "weekend_hotel_booking_review",
   "start_url": "https://example.com",
   "tasks": [
-    "Find the target product",
-    "Add the product to the cart",
-    "Update quantity if needed",
-    "Proceed to checkout"
+    "Search for a hotel stay for 2 adults for next weekend.",
+    "Compare a few options and open one that looks like a good fit.",
+    "Review the room details, total price, and cancellation policy.",
+    "Continue to the checkout or final booking step."
   ],
   "success_criteria": {
     "url_contains": [
       "/checkout",
-      "/payment"
+      "/book",
+      "/traveler"
     ],
     "text_contains": [
-      "Checkout",
+      "Guest details",
       "Payment",
-      "Order Summary"
+      "Review and book"
     ]
   },
   "max_steps": 25,
@@ -45,11 +46,13 @@
     "postal_code": "78701",
     "notes": "Usability test participant"
   },
-  "task_search_hint": "target product name",
+  "task_search_hint": "hotel for next weekend with free cancellation",
   "site_hints": {
     "prefer_labels": [
       "search",
-      "add to cart",
+      "guest rating",
+      "free cancellation",
+      "reserve",
       "checkout"
     ],
     "avoid_labels": [
