@@ -87,12 +87,16 @@ GitHub Pages serves **static files only**. It cannot run FastAPI, Playwright, or
 
 ### Pointing the hosted UI at an API
 
-1. Host `uvicorn app.main:app` somewhere with a public HTTPS URL (e.g. [Render](https://render.com) or [Railway](https://railway.app)).
-2. Ensure that host allows CORS from `https://kmann11.github.io` (the FastAPI app already matches `*.github.io`).
+See **[HOSTING.md](../HOSTING.md)** for Render Blueprint deploy + `VITE_API_BASE` wiring.
+
+1. Host `uvicorn app.main:app` somewhere with a public HTTPS URL (e.g. [Render](https://render.com) via this repo’s `render.yaml`, or [Railway](https://railway.app)).
+2. Ensure that host allows CORS from `https://kmann11.github.io` (the FastAPI app matches `*.github.io`, `*.onrender.com`, and Railway hosts).
 3. Set the GitHub Actions repository variable **`VITE_API_BASE`** to that API origin (no trailing slash), e.g. `https://your-service.onrender.com`.
 4. Re-run **Deploy frontend to GitHub Pages** (or push a frontend change) so the build bakes the variable in.
 
 Alternatively, for local-only API use, run the UI with Vite (`npm run dev`) against `http://localhost:8000` — browsers block HTTPS Pages → HTTP localhost (mixed content).
+
+**Auth caveat:** Figma/GitHub interactive login popups do not work well on cloud headless hosts — use public links or run locally for SSO flows.
 
 ## Notes
 

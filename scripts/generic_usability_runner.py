@@ -50,7 +50,9 @@ DEFAULT_GENERIC_CONFIG = {
     "browser": {
         # Flip to True if running headless (CI / no display).
         # Headful is much harder for bot-detection to flag.
-        "headless": False,
+        # USABILITY_HEADLESS=true (Docker/Render) defaults this to True.
+        "headless": os.getenv("USABILITY_HEADLESS", "").strip().lower()
+        in {"1", "true", "yes", "on"},
         # Real Chrome on macOS. Keep the Chrome major version current-ish.
         "user_agent": (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "

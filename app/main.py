@@ -4,6 +4,7 @@ import asyncio
 import copy
 import csv
 import datetime as dt
+import os
 import sys
 import threading
 import time
@@ -54,14 +55,29 @@ app = FastAPI(
     description="Minimal API wrapper for the generic Playwright usability runner.",
 )
 
+
+def _cors_allow_origins() -> list[str]:
+    """Extra exact origins from CORS_ORIGINS (comma-separated)."""
+    raw = os.getenv("CORS_ORIGINS", "").strip()
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+# Local Vite + GitHub Pages + common Render/Railway public hosts.
+# Extra origins: set CORS_ORIGINS=https://example.com,https://other.example
+_CORS_ORIGIN_REGEX = (
+    r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+    r"|https://[\w-]+\.github\.io$"
+    r"|https://[\w-]+\.onrender\.com$"
+    r"|https://[\w-]+\.up\.railway\.app$"
+    r"|https://[\w-]+\.railway\.app$"
+)
+
 app.add_middleware(
     CORSMiddleware,
-    # Local Vite dev servers + the GitHub Pages hosted UI
-    # (https://<user>.github.io/simulated-usability-runner/).
-    allow_origin_regex=(
-        r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
-        r"|https://[\w-]+\.github\.io$"
-    ),
+    allow_origins=_cors_allow_origins(),
+    allow_origin_regex=_CORS_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -730,12 +746,20 @@ def _run_job(job_id: str, config: dict[str, Any], warnings: list[str], payload: 
             AUTH_RESUME_EVENTS.pop(job_id, None)
 
 
+def _env_truthy(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def build_config(override: dict[str, Any]) -> dict[str, Any]:
     config = copy.deepcopy(DEFAULT_GENERIC_CONFIG)
     recursive_merge(config, override)
     # Personas may arrive with lever data (and a segment id) but no explicit
     # behavior floats. Fill the legacy 4-float model in so the runner is happy.
     config["personas"] = [normalize_persona(persona) for persona in config.get("personas", [])]
+    # Cloud / Docker: USABILITY_HEADLESS forces headless Chromium (no display).
+    if _env_truthy("USABILITY_HEADLESS"):
+        browser = config.setdefault("browser", {})
+        browser["headless"] = True
     return config
 
 
@@ -770,6 +794,12 @@ def validate_config(config: dict[str, Any]) -> tuple[list[str], list[str]]:
                 warnings.append(
                     "This link usually requires you to sign in first. Run from the web app so we "
                     "can open a browser window for one-time login."
+                )
+            elif _env_truthy("USABILITY_HEADLESS"):
+                warnings.append(
+                    "Interactive login (Figma/GitHub SSO) does not work well on hosted "
+                    "headless cloud. Use a public link, a pre-warmed storage_state from a "
+                    "local machine, or run the API locally for authenticated flows."
                 )
     if not config["tasks"]:
         errors.append("Add at least one task.")

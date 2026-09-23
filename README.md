@@ -224,7 +224,9 @@ The React frontend is published to GitHub Pages:
 
 **https://kmann11.github.io/simulated-usability-runner/**
 
-That URL is the **UI only**. GitHub Pages cannot run FastAPI or Playwright. To run experiments from the hosted UI, point it at a separately hosted API via the Actions variable `VITE_API_BASE` (see `frontend/README.md`). Local full-stack use remains: Vite on port 5273 + `uvicorn` on 8000.
+That URL is the **UI only**. GitHub Pages cannot run FastAPI or Playwright. To run experiments from the hosted UI, deploy the API (Render Blueprint in this repo) and set the Actions variable `VITE_API_BASE` to the API HTTPS URL. Full steps: **[HOSTING.md](HOSTING.md)**.
+
+Local full-stack use remains: Vite on port 5273 + `uvicorn` on 8000.
 
 ## Optional FastAPI Wrapper
 
@@ -240,6 +242,7 @@ Endpoints:
 - `GET /healthz`
 - `POST /validate`
 - `POST /run`
+- `POST /runs` (async jobs)
 - `POST /stress`
 
 Run it with:
@@ -248,7 +251,7 @@ Run it with:
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-A React UI for this API lives in `frontend/` (local: `npm run dev`; hosted: GitHub Pages above). The Jupyter form remains available for notebook-based runs.
+For cloud: use the root `Dockerfile` + `render.yaml` (see [HOSTING.md](HOSTING.md)). A React UI for this API lives in `frontend/` (local: `npm run dev`; hosted: GitHub Pages above). The Jupyter form remains available for notebook-based runs.
 
 ## Stress Benchmark
 

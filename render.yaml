@@ -1,0 +1,26 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Deploy: Dashboard → New → Blueprint → connect this repo → apply.
+# After the service is live, set GitHub Actions variable VITE_API_BASE to the
+# service HTTPS URL (no trailing slash) and re-run "Deploy frontend to GitHub Pages".
+services:
+  - type: web
+    name: simulated-usability-runner
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    # Chromium is memory-heavy; free (512MB) may OOM on large runs — upgrade to
+    # starter if health checks pass but runs crash or the service restarts.
+    envVars:
+      - key: USABILITY_HEADLESS
+        value: "true"
+      # Required for GPT-backed decisions. Leave unset to use the fallback policy.
+      - key: OPENAI_API_KEY
+        sync: false
+      # Optional model override (default gpt-4o in the runner).
+      - key: USABILITY_MODEL
+        sync: false
+      # Optional comma-separated extra CORS origins (e.g. a custom Pages URL).
+      - key: CORS_ORIGINS
+        sync: false
