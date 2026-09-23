@@ -13,8 +13,45 @@ const SEVERITY_LABEL: Record<HeuristicScore["severity"], string> = {
   high: "Needs attention",
 };
 
+function guardrailForScore(score: HeuristicScore): { label: string; detail: string; tone: "risk" | "watch" | "good" } {
+  if (score.evidence.length === 0) {
+    return {
+      label: "Limited evidence",
+      detail: "We didn't capture enough step-by-step detail for this item. Use it as a prompt to look closer, not as a firm finding.",
+      tone: "watch",
+    };
+  }
+  if (score.confidence < 0.55) {
+    return {
+      label: "Needs a closer look",
+      detail: "The signal is thin. Validate with a real session or a follow-up run before changing the design.",
+      tone: "watch",
+    };
+  }
+  if (score.severity === "high") {
+    return {
+      label: "Validate with real users",
+      detail: "This looks serious in the automated run. Use it to focus your next user session, not as final proof.",
+      tone: "risk",
+    };
+  }
+  if (score.severity === "medium") {
+    return {
+      label: "Worth discussing",
+      detail: "Tied to what we observed in the walkthrough. Good input for a design critique.",
+      tone: "risk",
+    };
+  }
+  return {
+    label: "Looks okay",
+    detail: "No major concerns surfaced here. Keep an eye on it in real sessions and future runs.",
+    tone: "good",
+  };
+}
+
 export function HeuristicCard({ score, defaultExpanded = false }: HeuristicCardProps) {
   const [open, setOpen] = useState(defaultExpanded);
+  const guardrail = guardrailForScore(score);
 
   return (
     <article className={`heuristic-card severity-${score.severity}`}>
@@ -41,6 +78,10 @@ export function HeuristicCard({ score, defaultExpanded = false }: HeuristicCardP
 
       {open && (
         <div className="heuristic-body">
+          <div className={`guardrail-callout guardrail-${guardrail.tone}`}>
+            <strong>{guardrail.label}</strong>
+            <span>{guardrail.detail}</span>
+          </div>
           <p className="heuristic-summary">{score.summary}</p>
           {score.recommendation && (
             <p className="heuristic-rec">

@@ -94,18 +94,21 @@ LEVER_DEFINITIONS: list[dict] = [
         "id": "trust_baseline",
         "name": "Trust baseline",
         "summary": "How much the tester trusts the platform out of the gate.",
+        "group": "risk_trust",
         "options": _LEVEL_OPTIONS,
     },
     {
         "id": "time_pressure",
         "name": "Time pressure",
         "summary": "How much hurry they're in. High = books in days, not weeks.",
+        "group": "pressure",
         "options": _LEVEL_OPTIONS,
     },
     {
         "id": "info_processing_style",
         "name": "Info processing style",
         "summary": "Skimmer vs deep reader.",
+        "group": "mindset",
         "options": [
             {"value": "skimmer", "label": "Skimmer"},
             {"value": "deep_reader", "label": "Deep reader"},
@@ -115,24 +118,28 @@ LEVER_DEFINITIONS: list[dict] = [
         "id": "risk_tolerance",
         "name": "Risk tolerance",
         "summary": "How willing to try unfamiliar or unverified options.",
+        "group": "risk_trust",
         "options": _LEVEL_OPTIONS,
     },
     {
         "id": "cognitive_load_sensitivity",
         "name": "Cognitive load sensitivity",
         "summary": "How easily overwhelmed by complex flows or copy.",
+        "group": "mindset",
         "options": _LEVEL_OPTIONS,
     },
     {
         "id": "error_propensity",
         "name": "Error propensity",
         "summary": "How likely to slip up, misclick, or skip steps.",
+        "group": "risk_trust",
         "options": _LEVEL_OPTIONS,
     },
     {
         "id": "device_context",
         "name": "Device / context",
         "summary": "Where they're using the site from.",
+        "group": "context",
         "options": [
             {"value": "desktop", "label": "Desktop"},
             {"value": "mobile", "label": "Mobile"},
@@ -143,19 +150,55 @@ LEVER_DEFINITIONS: list[dict] = [
         "id": "budget_sensitivity",
         "name": "Budget sensitivity",
         "summary": "How price-conscious. High = chases deals; Low = pays for premium.",
+        "group": "pressure",
         "options": _LEVEL_OPTIONS,
     },
     {
         "id": "abandonment_threshold",
         "name": "Abandonment threshold",
         "summary": "How quickly they bail when frustrated. Low = patient; High = bounces fast.",
+        "group": "pressure",
         "options": _LEVEL_OPTIONS,
     },
     {
-        "id": "prior_familiarity",
+        "id": "prior_product_familiarity",
         "name": "Prior product familiarity",
         "summary": "How familiar they are with this kind of product.",
+        "group": "mindset",
         "options": _LEVEL_OPTIONS,
+    },
+]
+
+
+# ---------------------------------------------------------------------------
+# Lever groups.
+#
+# The UI renders the 10 levers in four buckets so the persona editor doesn't
+# read as a wall of dropdowns. Those buckets live here (not in the frontend)
+# so the taxonomy the user sees matches what the API serves. Each lever's
+# ``group`` id above points into this list.
+# ---------------------------------------------------------------------------
+
+LEVER_GROUPS: list[dict] = [
+    {
+        "id": "mindset",
+        "name": "Mindset",
+        "summary": "How the tester takes in and processes information.",
+    },
+    {
+        "id": "pressure",
+        "name": "Pressure",
+        "summary": "Time, budget, and patience constraints.",
+    },
+    {
+        "id": "risk_trust",
+        "name": "Risk & trust",
+        "summary": "How cautious or confident they are with the platform and the decision.",
+    },
+    {
+        "id": "context",
+        "name": "Context",
+        "summary": "Where and how they're using the site.",
     },
 ]
 
@@ -239,7 +282,7 @@ SEGMENT_PRESETS: list[dict] = [
             "device_context": "desktop",
             "budget_sensitivity": "low",
             "abandonment_threshold": "low",
-            "prior_familiarity": "high",
+            "prior_product_familiarity": "high",
         },
     },
     {
@@ -262,7 +305,7 @@ SEGMENT_PRESETS: list[dict] = [
             "device_context": "desktop",
             "budget_sensitivity": "high",
             "abandonment_threshold": "medium",
-            "prior_familiarity": "medium",
+            "prior_product_familiarity": "medium",
         },
     },
     {
@@ -285,7 +328,7 @@ SEGMENT_PRESETS: list[dict] = [
             "device_context": "mixed",
             "budget_sensitivity": "medium",
             "abandonment_threshold": "medium",
-            "prior_familiarity": "medium-high",
+            "prior_product_familiarity": "medium-high",
         },
     },
     {
@@ -308,7 +351,7 @@ SEGMENT_PRESETS: list[dict] = [
             "device_context": "mixed",
             "budget_sensitivity": "medium",
             "abandonment_threshold": "medium",
-            "prior_familiarity": "medium",
+            "prior_product_familiarity": "medium",
         },
     },
 
@@ -333,7 +376,7 @@ SEGMENT_PRESETS: list[dict] = [
             "device_context": "desktop",
             "budget_sensitivity": "medium",
             "abandonment_threshold": "medium",
-            "prior_familiarity": "medium",
+            "prior_product_familiarity": "medium",
         },
     },
     {
@@ -356,7 +399,7 @@ SEGMENT_PRESETS: list[dict] = [
             "device_context": "desktop",
             "budget_sensitivity": "medium",
             "abandonment_threshold": "medium",
-            "prior_familiarity": "medium",
+            "prior_product_familiarity": "medium",
         },
     },
     {
@@ -379,7 +422,7 @@ SEGMENT_PRESETS: list[dict] = [
             "device_context": "desktop",
             "budget_sensitivity": "medium-high",
             "abandonment_threshold": "medium",
-            "prior_familiarity": "medium",
+            "prior_product_familiarity": "medium",
         },
     },
     {
@@ -402,7 +445,7 @@ SEGMENT_PRESETS: list[dict] = [
             "device_context": "desktop",
             "budget_sensitivity": "high",
             "abandonment_threshold": "low",
-            "prior_familiarity": "medium",
+            "prior_product_familiarity": "medium",
         },
     },
     {
@@ -425,7 +468,7 @@ SEGMENT_PRESETS: list[dict] = [
             "device_context": "mobile",
             "budget_sensitivity": "high",
             "abandonment_threshold": "high",
-            "prior_familiarity": "low",
+            "prior_product_familiarity": "low",
         },
     },
 
@@ -450,7 +493,7 @@ SEGMENT_PRESETS: list[dict] = [
             "device_context": "mobile",
             "budget_sensitivity": "medium-high",
             "abandonment_threshold": "medium-high",
-            "prior_familiarity": "high",
+            "prior_product_familiarity": "high",
         },
     },
     {
@@ -473,7 +516,7 @@ SEGMENT_PRESETS: list[dict] = [
             "device_context": "mixed",
             "budget_sensitivity": "medium",
             "abandonment_threshold": "medium",
-            "prior_familiarity": "high",
+            "prior_product_familiarity": "high",
         },
     },
     {
@@ -496,7 +539,7 @@ SEGMENT_PRESETS: list[dict] = [
             "device_context": "mobile",
             "budget_sensitivity": "medium",
             "abandonment_threshold": "high",
-            "prior_familiarity": "medium",
+            "prior_product_familiarity": "medium",
         },
     },
 
@@ -526,7 +569,7 @@ SEGMENT_PRESETS: list[dict] = [
             "device_context": "mixed",
             "budget_sensitivity": "high",
             "abandonment_threshold": "medium",
-            "prior_familiarity": "medium",
+            "prior_product_familiarity": "medium",
         },
     },
     {
@@ -549,7 +592,7 @@ SEGMENT_PRESETS: list[dict] = [
             "device_context": "desktop",
             "budget_sensitivity": "medium-high",
             "abandonment_threshold": "medium",
-            "prior_familiarity": "high",
+            "prior_product_familiarity": "high",
         },
     },
     {
@@ -572,7 +615,7 @@ SEGMENT_PRESETS: list[dict] = [
             "device_context": "desktop",
             "budget_sensitivity": "high",
             "abandonment_threshold": "medium-high",
-            "prior_familiarity": "high",
+            "prior_product_familiarity": "high",
         },
     },
 
@@ -599,7 +642,7 @@ SEGMENT_PRESETS: list[dict] = [
             "device_context": "mobile",
             "budget_sensitivity": "high",
             "abandonment_threshold": "high",
-            "prior_familiarity": "low-medium",
+            "prior_product_familiarity": "low-medium",
         },
     },
     {
@@ -622,7 +665,7 @@ SEGMENT_PRESETS: list[dict] = [
             "device_context": "mixed",
             "budget_sensitivity": "low",
             "abandonment_threshold": "low-medium",
-            "prior_familiarity": "high",
+            "prior_product_familiarity": "high",
         },
     },
 ]

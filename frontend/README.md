@@ -42,7 +42,7 @@ cd frontend
 npm run dev
 ```
 
-The dev server runs on [http://localhost:5173](http://localhost:5173). Requests to `/api/*` are proxied to the FastAPI backend (path rewrite `/api/run` → `/run`), so the browser does not need CORS in dev.
+The dev server runs on [http://localhost:5273](http://localhost:5273) by default. Override with `VITE_PORT` (in `.env.local` or inline, e.g. `VITE_PORT=5374 npm run dev`) if 5273 is taken too. The port is intentionally not the Vite default of 5173 so this app can run alongside other Vite projects without colliding. Requests to `/api/*` are proxied to the FastAPI backend (path rewrite `/api/run` → `/run`), so the browser does not need CORS in dev.
 
 ## Configuration
 
@@ -50,6 +50,7 @@ Copy `.env.example` to `.env.local` to override defaults:
 
 | Variable                  | Purpose                                                                                                                                                            |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `VITE_PORT`               | Dev-server port. Default `5273` (chosen so this app does not collide with other Vite projects on `5173`).                                                          |
 | `VITE_API_PROXY_TARGET`   | Target URL the Vite dev proxy forwards `/api/*` to. Default `http://localhost:8000`.                                                                               |
 | `VITE_API_BASE`           | Optional. If set, the browser fetches directly from this URL (no proxy). Use for production-style deployments where the backend is reachable from the browser. |
 

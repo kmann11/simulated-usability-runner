@@ -1,0 +1,83 @@
+{
+  "experiment_name": "mobile_family_chips_srp_prototype",
+  "_notes": "Targets the BEX family-traveler SRP filter prototype on branch 'eg-uxr-design-site-review' of egds-prototype-kit. Run `cd ~/egds-prototype-kit/packages/react && npm run dev` first.",
+  "start_url": "http://localhost:5173/",
+  "tasks": [
+    "You're a parent planning a trip with two kids. Use the filter chips at the top of the search results to narrow the list to properties that would actually fit your family — at minimum somewhere with multiple beds or bedrooms.",
+    "Add at least one more family-relevant filter (for example a kitchen, connecting rooms, or a crib) and confirm the property list updates to reflect what you picked.",
+    "Open the dates row at the top of the page, pick a check-in and check-out, and apply the new dates."
+  ],
+  "success_criteria": {
+    "url_contains": [],
+    "text_contains": [
+      "2+ beds",
+      "Bunk beds",
+      "Connecting rooms",
+      "Kitchen",
+      "2+ bedrooms",
+      "Apply"
+    ]
+  },
+  "max_steps": 18,
+  "click_timeout_ms": 5000,
+  "runs_per_persona": 2,
+  "output_file": "output/mobile_family_chips_srp_results.csv",
+  "model": "gpt-4o",
+  "run_timeout_s": 180,
+  "sleep_scale": 0.4,
+  "hydrate_timeout_ms": 8000,
+  "observation_char_limit": 2500,
+  "candidate_limits": {
+    "click": 14,
+    "input": 6,
+    "select": 4
+  },
+  "browser": {
+    "use_stealth": false,
+    "storage_state_path": "output/sessions/localhost.session.json",
+    "interactive_auth": true,
+    "viewport": { "width": 390, "height": 844 },
+    "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+  },
+  "test_data": {
+    "full_name": "Jordan Lee",
+    "first_name": "Jordan",
+    "last_name": "Lee",
+    "email": "jordan.lee@example.com",
+    "phone": "555-010-2458",
+    "notes": "Parent traveling with two kids ages 6 and 9"
+  },
+  "task_search_hint": "family filter chips on a mobile SRP",
+  "site_hints": {
+    "prefer_labels": [
+      "2+ beds",
+      "Bunk beds",
+      "Cribs / pack-n-play",
+      "Connecting rooms",
+      "Kitchen",
+      "2+ bedrooms",
+      "Apply",
+      "Done"
+    ],
+    "avoid_labels": [
+      "Variant",
+      "Reset all"
+    ]
+  },
+  "personas": [
+    {
+      "name": "first_time_family_planner",
+      "exploration": 0.6,
+      "patience": 0.6,
+      "attention": 0.5,
+      "error_rate": 0.4
+    },
+    {
+      "name": "experienced_parent_speed_runner",
+      "exploration": 0.3,
+      "patience": 0.4,
+      "attention": 0.7,
+      "error_rate": 0.2
+    }
+  ]
+}

@@ -24,7 +24,7 @@ export function HeuristicScorecard({ review }: HeuristicScorecardProps) {
         <div className="overall">
           <span className="muted small">Overall flow score</span>
           <strong className="overall-num">
-            {overall === null ? "—" : `${overall.toFixed(1)} / 5`}
+            {overall === null ? "N/A" : `${overall.toFixed(1)} / 5`}
           </strong>
           <span className="muted small">
             Average across {review.aggregate_scores.length} heuristic

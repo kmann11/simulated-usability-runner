@@ -20,7 +20,17 @@ export interface LeverDefinition {
   id: string;
   name: string;
   summary: string;
+  // id of the LeverGroup this lever renders under (mindset | pressure |
+  // risk_trust | context). Optional only because older API responses may
+  // not carry it; the CatalogProvider falls back to the static mirror.
+  group?: string;
   options: LeverOption[];
+}
+
+export interface LeverGroup {
+  id: string;
+  name: string;
+  summary?: string;
 }
 
 export type SegmentScope = "brand" | "cross_brand";
@@ -81,6 +91,18 @@ export interface TestData {
   notes: string;
 }
 
+export interface BrowserConfig {
+  headless?: boolean;
+  use_stealth?: boolean;
+  storage_state_path?: string | null;
+  interactive_auth?: boolean;
+  user_agent?: string;
+  viewport?: { width: number; height: number };
+  locale?: string;
+  timezone_id?: string;
+  color_scheme?: string;
+}
+
 export interface ExperimentConfig {
   experiment_name: string;
   start_url: string;
@@ -102,6 +124,7 @@ export interface ExperimentConfig {
   task_search_hint: string;
   site_hints: SiteHints;
   personas: Persona[];
+  browser?: BrowserConfig;
 }
 
 export interface ConfigPreview {
@@ -213,6 +236,44 @@ export interface FlowHeuristicReview {
   session_reviews: SessionHeuristicReview[];
 }
 
+export interface TlxSubscaleScore {
+  id: string;
+  name: string;
+  score: number;
+  rationale: string;
+}
+
+export interface SessionTlxReview {
+  session_id: string;
+  persona: string;
+  overall: number;
+  confidence: number;
+  subscales: TlxSubscaleScore[];
+  mental_demand: number;
+  physical_demand: number;
+  temporal_demand: number;
+  performance: number;
+  effort: number;
+  frustration: number;
+}
+
+export interface PersonaTlxReview {
+  persona: string;
+  overall: number | null;
+  confidence: number;
+  subscales: TlxSubscaleScore[];
+  session_count: number;
+}
+
+export interface FlowTlxReview {
+  overall: number | null;
+  confidence: number | null;
+  disclaimer: string;
+  subscales: TlxSubscaleScore[];
+  session_reviews: SessionTlxReview[];
+  persona_reviews: PersonaTlxReview[];
+}
+
 export interface RunResponse {
   status: string;
   experiment_name: string;
@@ -224,6 +285,7 @@ export interface RunResponse {
   sessions: RunSession[];
   persona_summaries: PersonaSummary[];
   heuristic_review?: FlowHeuristicReview;
+  tlx_review?: FlowTlxReview;
 }
 
 export interface RunJobProgress {

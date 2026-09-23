@@ -9,15 +9,17 @@ import {
 import { api } from "./api/client";
 import {
   LEVER_DEFINITIONS as STATIC_LEVERS,
+  LEVER_GROUPS_FALLBACK as STATIC_LEVER_GROUPS,
   LOBS_FALLBACK,
   SEGMENT_PRESETS as STATIC_SEGMENTS,
 } from "./segments";
-import type { LeverDefinition, Lob, SegmentPreset } from "./types";
+import type { LeverDefinition, LeverGroup, Lob, SegmentPreset } from "./types";
 
 export interface CatalogValue {
   lobs: Lob[];
   segments: SegmentPreset[];
   levers: LeverDefinition[];
+  leverGroups: LeverGroup[];
   // True once the backend fetch has completed (success or failure).
   loaded: boolean;
   // Which source the data on hand actually came from.
@@ -30,6 +32,7 @@ const FALLBACK_VALUE: CatalogValue = {
   lobs: LOBS_FALLBACK,
   segments: STATIC_SEGMENTS,
   levers: STATIC_LEVERS,
+  leverGroups: STATIC_LEVER_GROUPS,
   loaded: false,
   source: "fallback",
   error: null,
@@ -44,16 +47,20 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     (async () => {
       try {
-        const [lobs, segments, levers] = await Promise.all([
+        const [lobs, segments, levers, leverGroups] = await Promise.all([
           api.getLobs(),
           api.getSegments(),
           api.getLevers(),
+          // Lever-groups endpoint is newer; tolerate older backends by falling
+          // back to the static list if this one call fails.
+          api.getLeverGroups().catch(() => STATIC_LEVER_GROUPS),
         ]);
         if (cancelled) return;
         setState({
           lobs,
           segments,
           levers,
+          leverGroups,
           loaded: true,
           source: "backend",
           error: null,

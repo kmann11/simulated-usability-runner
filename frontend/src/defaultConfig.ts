@@ -34,9 +34,11 @@ export const DEFAULT_CONFIG: ExperimentConfig = {
   runs_per_persona: 2,
   output_file: "output/generic_usability_results.csv",
   model: "gpt-4o",
-  run_timeout_s: 120,
+  // Friendly defaults for real consumer sites (Expedia, Vrbo, etc.).
+  // See scripts/generic_usability_runner.py DEFAULT_GENERIC_CONFIG for notes.
+  run_timeout_s: 240,
   sleep_scale: 0.6,
-  hydrate_timeout_ms: 45000,
+  hydrate_timeout_ms: 15000,
   observation_char_limit: 2500,
   candidate_limits: {
     click: 12,

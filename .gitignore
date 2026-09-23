@@ -12,7 +12,14 @@ __pycache__/
 output/*.csv
 output/*.log
 output/*.jsonl
+output/runs/
 !output/.gitkeep
+
+# Playwright storage_state files — these hold real auth cookies. NEVER commit.
+output/sessions/
+output/*_session.json
+output/session_*.json
+*.session.json
 
 # Optional per-study local configs can be ignored if needed.
 # configs/generic_usability_experiment.json

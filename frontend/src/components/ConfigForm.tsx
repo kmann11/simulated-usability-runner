@@ -1,21 +1,34 @@
+import { useMemo, useRef } from "react";
 import { useCatalog } from "../catalog";
+import {
+  DEFAULT_PROTOTYPE_HELP,
+  guessPrototypeSource,
+  placeholderForPrototypeSource,
+  PROTOTYPE_HELP,
+  PROTOTYPE_SOURCE_LABEL,
+} from "../prototypeSource";
+import { buildRunPlanCopy, formatLinkLabel, isValidPrototypeUrl } from "../linkPreview";
+import { signInCopyForUrl } from "../prototypeAuth";
 import { deriveBehaviorFloats } from "../segments";
+import { isPlaceholderStudyName, suggestStudyName } from "../studyNaming";
 import type { ExperimentConfig, Lob } from "../types";
 import { PersonaList } from "./PersonaList";
 import { StringListEditor } from "./StringListEditor";
+import { TaskEditor } from "./TaskEditor";
 
 // The LOBs we currently surface in the UI, in the order they should appear.
-// Keep this list narrow — the backend can carry more LOBs (e.g., b2b_network)
-// without the UI having to change.
 const LOB_PILL_ORDER = ["expedia", "vrbo", "hotels_com", "partner_central"];
 
-// Consumer LOBs inherit cross-brand segments (Gen Z, High Value); B2B LOBs
-// don't. Mirrors the rule in scripts/persona_segments.get_segments_for_lob.
 const CONSUMER_LOB_IDS = new Set(["expedia", "vrbo", "hotels_com"]);
 
 export interface RunOptionsState {
   include_heuristics: boolean;
+  include_tlx: boolean;
   capture_screenshots: boolean;
+  /** When true (default for Figma/GitHub links), open a browser for one-time sign-in before the run. */
+  sign_in_before_run?: boolean;
+  /** @deprecated Use sign_in_before_run */
+  figma_sign_in?: boolean;
 }
 
 interface ConfigFormProps {
@@ -34,6 +47,13 @@ export function ConfigForm({
   disabled,
 }: ConfigFormProps) {
   const { lobs, segments } = useCatalog();
+  const studyNameTouchedRef = useRef(false);
+  const detectedSource = useMemo(
+    () => guessPrototypeSource(config.start_url),
+    [config.start_url],
+  );
+  const signInCopy = useMemo(() => signInCopyForUrl(config.start_url), [config.start_url]);
+
   const update = <K extends keyof ExperimentConfig>(key: K, value: ExperimentConfig[K]) => {
     onChange({ ...config, [key]: value });
   };
@@ -41,35 +61,28 @@ export function ConfigForm({
     onOptionsChange({ ...options, [key]: value });
   };
 
-  // Resolve the pill list to the LOB objects we actually have in the catalog,
-  // preserving the authored order. Any missing LOB is silently skipped.
+  const maybeSuggestStudyName = () => {
+    if (studyNameTouchedRef.current || !isPlaceholderStudyName(config.experiment_name)) return;
+    const suggested = suggestStudyName(config.start_url, config.tasks);
+    if (suggested) {
+      onChange({ ...config, experiment_name: suggested });
+    }
+  };
+
   const lobPills: Lob[] = LOB_PILL_ORDER
     .map((id) => lobs.find((l) => l.id === id))
     .filter((l): l is Lob => Boolean(l));
 
   const activeLob = config.lob ?? "";
 
-  // Changing the LOB resets the testers to every non-custom segment visible
-  // under the new LOB — i.e., brand-scoped segments plus cross-brand ones
-  // (Gen Z, High Value) for consumer LOBs. Partner Central ends up empty.
-  //
-  // Order: brand primary first, then other brand segments, then cross-brand.
-  // This mirrors the PersonaList render order so the tester cards line up
-  // with the dropdown options.
   const handleLobChange = (nextLob: string) => {
     if (nextLob === activeLob) return;
     const includeCrossBrand = CONSUMER_LOB_IDS.has(nextLob);
     const visible = segments.filter(
-      (s) =>
-        s.lob === nextLob ||
-        (includeCrossBrand && s.scope === "cross_brand"),
+      (s) => s.lob === nextLob || (includeCrossBrand && s.scope === "cross_brand"),
     );
-    const primary = visible.filter(
-      (s) => s.scope !== "cross_brand" && s.is_primary,
-    );
-    const brand = visible.filter(
-      (s) => s.scope !== "cross_brand" && !s.is_primary,
-    );
+    const primary = visible.filter((s) => s.scope !== "cross_brand" && s.is_primary);
+    const brand = visible.filter((s) => s.scope !== "cross_brand" && !s.is_primary);
     const cross = visible.filter((s) => s.scope === "cross_brand");
     const ordered = [...primary, ...brand, ...cross];
     const nextPersonas = ordered.map((seg) => ({
@@ -83,60 +96,148 @@ export function ConfigForm({
 
   return (
     <fieldset className="form" disabled={disabled}>
-      <section className="step">
+      <section className="form-guide" aria-label="How this works">
+        <h2 className="form-guide-title">Three steps</h2>
+        <ol className="form-guide-steps">
+          <li>
+            <strong>Paste your prototype link</strong>, the page your designer shared.
+          </li>
+          <li>
+            <strong>Write what they should try</strong>, short steps in order.
+          </li>
+          <li>
+            <strong>Run</strong>. We open that link and show where people got stuck.
+          </li>
+        </ol>
+      </section>
+
+      <section className="step step-hero">
         <h2>
-          <span className="step-num">1</span> What are you testing?
+          <span className="step-num">1</span> Paste your prototype link
         </h2>
-        <div className="grid-2">
+        <p className="muted step-lead">
+          The exact page where the test should start: Figma share link, GitHub preview, design preview, or staging.
+        </p>
+
+        <div className="prototype-link-block">
           <label>
-            <span>Test name</span>
-            <input
-              type="text"
-              value={config.experiment_name}
-              onChange={(event) => update("experiment_name", event.target.value)}
-              placeholder="e.g. checkout flow"
-            />
-            <small>Used in the saved results file. Anything is fine.</small>
-          </label>
-          <label>
-            <span>Link</span>
+            <span>Prototype link</span>
             <input
               type="url"
               value={config.start_url}
-              onChange={(event) => update("start_url", event.target.value)}
-              placeholder="https://example.com"
+              onChange={(event) => {
+                const nextUrl = event.target.value;
+                update("start_url", nextUrl);
+                if (signInCopyForUrl(nextUrl) && options.sign_in_before_run === undefined) {
+                  onOptionsChange({ ...options, sign_in_before_run: true, figma_sign_in: true });
+                }
+              }}
+              onBlur={maybeSuggestStudyName}
+              placeholder={placeholderForPrototypeSource(detectedSource)}
             />
-            <small>The page the test user starts on.</small>
+            {detectedSource ? (
+              <small className="prototype-detected-tip">
+                <span className="prototype-detected-label">
+                  Detected: {PROTOTYPE_SOURCE_LABEL[detectedSource]}
+                </span>
+                {". "}
+                {PROTOTYPE_HELP[detectedSource]}
+              </small>
+            ) : (
+              <small>{DEFAULT_PROTOTYPE_HELP}</small>
+            )}
           </label>
+
+          {signInCopy && (
+            <div className="figma-auth-callout" role="note">
+              <p>
+                <strong>{signInCopy.calloutTitle}</strong>. {signInCopy.calloutBody}
+              </p>
+            </div>
+          )}
         </div>
+
+        {config.start_url.trim() && (
+          <div
+            className={`link-ready-banner${isValidPrototypeUrl(config.start_url) ? " link-ready-banner--ok" : " link-ready-banner--warn"}`}
+            role="status"
+          >
+            {isValidPrototypeUrl(config.start_url) ? (
+              <>
+                <strong>Link looks good.</strong>{" "}
+                {buildRunPlanCopy(
+                  config.start_url,
+                  config.tasks.filter((task) => task.trim()).length,
+                  config.personas.length,
+                )}
+              </>
+            ) : (
+              <>
+                <strong>Check this link.</strong> It should start with{" "}
+                <code>https://</code> and open in your browser when you click it.
+              </>
+            )}
+            {isValidPrototypeUrl(config.start_url) && (
+              <span className="link-ready-target muted small">
+                Opening: {formatLinkLabel(config.start_url)}
+              </span>
+            )}
+          </div>
+        )}
       </section>
 
-      <section className="step">
+      <section className="step step-hero">
         <h2>
-          <span className="step-num">2</span> What are your tasks?
+          <span className="step-num">2</span> What should they try to do?
         </h2>
-        <p className="muted">
-          Add one task per line, in the order someone would do them.
+        <p className="muted step-lead">
+          Write like you&apos;re briefing a usability participant: one clear action per step, in
+          order.
         </p>
-        <StringListEditor
-          label="Tasks"
+        <TaskEditor
           values={config.tasks}
-          onChange={(tasks) => update("tasks", tasks)}
-          placeholder="e.g. Find a refundable hotel for 2 adults next weekend"
+          disabled={disabled}
+          onChange={(tasks) => {
+            if (!studyNameTouchedRef.current && isPlaceholderStudyName(config.experiment_name)) {
+              const suggested = suggestStudyName(config.start_url, tasks);
+              if (suggested) {
+                onChange({ ...config, tasks, experiment_name: suggested });
+                return;
+              }
+            }
+            update("tasks", tasks);
+          }}
         />
       </section>
 
+      <section className="step step-compact">
+        <label>
+          <span>Study name</span>
+          <input
+            type="text"
+            value={config.experiment_name}
+            onChange={(event) => {
+              studyNameTouchedRef.current = true;
+              update("experiment_name", event.target.value);
+            }}
+            onBlur={maybeSuggestStudyName}
+            placeholder="Auto-filled from your steps or link. Edit anytime."
+          />
+          <small>For your records when you save or share results. We suggest one if you leave it blank.</small>
+        </label>
+      </section>
+
       <section className="step">
         <h2>
-          <span className="step-num">3</span> Who are your users?
+          <span className="step-num">3</span> Who should try it?
         </h2>
-        <p className="muted">
-          Pick a research-backed segment to start. You can fine-tune their levers if you want, or
-          just go with the defaults.
+        <p className="muted step-lead">
+          Pick the product and traveler types you care about. Default profiles are fine for a first
+          run. You can fine-tune behavior later if needed.
         </p>
 
-        <div className="lob-pills-group" role="radiogroup" aria-label="Line of business">
-          <span className="lob-pills-label">Line of business</span>
+        <div className="lob-pills-group" role="radiogroup" aria-label="Product area">
+          <span className="lob-pills-label">Product area</span>
           <div className="lob-pills">
             {lobPills.map((lob) => {
               const isActive = lob.id === activeLob;
@@ -155,8 +256,8 @@ export function ConfigForm({
             })}
           </div>
           <small className="muted">
-            Picking a line of business loads a default set of testers for that product area.
-            Switching wipes your current testers.
+            Which brand or product is this for? Choosing one loads typical testers for that area.
+            Switching clears your current tester list.
           </small>
         </div>
 
@@ -167,13 +268,16 @@ export function ConfigForm({
         />
       </section>
 
-      <section className="step">
-        <h2>
-          <span className="step-num">4</span> How thorough should the test be?
-        </h2>
+      <details className="advanced run-options-details">
+        <summary>More options (tries, screenshots, success signals)</summary>
+        <p className="muted">
+          Defaults work for a first run. Open this only if you need to change timing or how we know
+          the task is done.
+        </p>
+
         <div className="grid-2">
           <label>
-            <span>Runs per tester</span>
+            <span>Tries per traveler type</span>
             <input
               type="number"
               min={1}
@@ -181,10 +285,10 @@ export function ConfigForm({
               value={config.runs_per_persona}
               onChange={(event) => update("runs_per_persona", Number(event.target.value))}
             />
-            <small>How many times each tester tries the flow. More runs = more confidence, but it takes longer.</small>
+            <small>2 is a good default. Patterns, not one lucky run.</small>
           </label>
           <label>
-            <span>Time limit per run (seconds)</span>
+            <span>Time limit per try (seconds)</span>
             <input
               type="number"
               min={30}
@@ -192,15 +296,10 @@ export function ConfigForm({
               value={config.run_timeout_s}
               onChange={(event) => update("run_timeout_s", Number(event.target.value))}
             />
-            <small>If a tester can't finish in this much time, we mark it as "gave up".</small>
+            <small>If they can&apos;t finish in time, we mark it as gave up.</small>
           </label>
         </div>
-      </section>
 
-      <section className="step">
-        <h2>
-          <span className="step-num">5</span> What do you want back?
-        </h2>
         <div className="option-rows">
           <label className="toggle-row">
             <input
@@ -209,11 +308,19 @@ export function ConfigForm({
               onChange={(event) => updateOption("include_heuristics", event.target.checked)}
             />
             <span className="toggle-text">
-              <strong>Score the flow against design heuristics</strong>
-              <small>
-                Adds a scorecard with what worked, what didn't, and quick recommendations. Doesn't
-                slow the run down.
-              </small>
+              <strong>Design quality scorecard</strong>
+              <small>What worked, what felt rough, and quick fixes to consider.</small>
+            </span>
+          </label>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={options.include_tlx}
+              onChange={(event) => updateOption("include_tlx", event.target.checked)}
+            />
+            <span className="toggle-text">
+              <strong>Workload forecast (Synthetic TLX)</strong>
+              <small>Directional NASA TLX-style load estimate from the simulated walkthrough.</small>
             </span>
           </label>
           <label className="toggle-row">
@@ -223,22 +330,13 @@ export function ConfigForm({
               onChange={(event) => updateOption("capture_screenshots", event.target.checked)}
             />
             <span className="toggle-text">
-              <strong>Take screenshots at each step</strong>
-              <small>
-                Saves a picture of every step so you can see what the tester saw. Slightly slower
-                and uses some disk space.
-              </small>
+              <strong>Screenshots at each step</strong>
+              <small>See what each traveler type saw. Helpful for sharing with designers.</small>
             </span>
           </label>
         </div>
-      </section>
 
-      <details className="advanced">
-        <summary>Advanced settings</summary>
-        <p className="muted">
-          Most people don't need to change these. They're here in case you want to fine-tune.
-        </p>
-
+        <h4 className="advanced-subhead">When is the task done?</h4>
         <div className="grid-2">
           <StringListEditor
             label="Words in the page address that mean success"
@@ -262,24 +360,24 @@ export function ConfigForm({
 
         <div className="grid-2">
           <label>
-            <span>Save results to (file path)</span>
+            <span>Where to save results (for your team&apos;s setup)</span>
             <input
               type="text"
               value={config.output_file}
               onChange={(event) => update("output_file", event.target.value)}
               placeholder="output/checkout_flow.csv"
             />
-            <small>A CSV file inside the project. Default is fine.</small>
+            <small>Leave as-is unless your team gave you a specific folder.</small>
           </label>
           <label>
-            <span>AI model</span>
+            <span>AI assistant (optional)</span>
             <input
               type="text"
               value={config.model}
               onChange={(event) => update("model", event.target.value)}
               placeholder="gpt-4o"
             />
-            <small>Only used if an OpenAI key is configured. Otherwise the runner uses a local fallback.</small>
+            <small>Only needed if your team configured an AI key. Otherwise we use a built-in fallback.</small>
           </label>
         </div>
       </details>

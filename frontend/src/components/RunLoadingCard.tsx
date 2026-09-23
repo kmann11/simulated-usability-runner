@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { formatLinkLabel } from "../linkPreview";
+import { signInCopyForUrl } from "../prototypeAuth";
 import type { ExperimentConfig, RunJobStatus } from "../types";
 import type { RunOptionsState } from "./ConfigForm";
 
@@ -8,6 +10,7 @@ interface RunLoadingCardProps {
   startedAt: number | null;
   job?: RunJobStatus | null;
   onStop?: () => void;
+  onAuthComplete?: () => void;
   stopDisabled?: boolean;
 }
 
@@ -28,15 +31,19 @@ function estimateRunDuration(config: ExperimentConfig, options: RunOptionsState)
   const basePerSession = clamp(Math.round(config.run_timeout_s * 0.28), 25, 55);
   const screenshotPenalty = options.capture_screenshots ? 6 : 0;
   const heuristicPenalty = options.include_heuristics ? 2 : 0;
+  const tlxPenalty = options.include_tlx ? 1 : 0;
   const baseOverhead = 20;
-  return baseOverhead + sessionCount * (basePerSession + screenshotPenalty + heuristicPenalty);
+  return (
+    baseOverhead +
+    sessionCount * (basePerSession + screenshotPenalty + heuristicPenalty + tlxPenalty)
+  );
 }
 
 function phaseLabel(progress: number): string {
   if (progress < 0.15) return "Getting the run set up.";
-  if (progress < 0.7) return "Walking through the flow across your selected segment profiles.";
-  if (progress < 0.92) return "Pulling together friction signals, paths, and weak spots.";
-  return "Wrapping up the results dashboard.";
+  if (progress < 0.7) return "Walking through the flow with your selected traveler types.";
+  if (progress < 0.92) return "Pulling together where people hesitated, went back, or got stuck.";
+  return "Wrapping up your results.";
 }
 
 export function RunLoadingCard({
@@ -45,9 +52,11 @@ export function RunLoadingCard({
   startedAt,
   job,
   onStop,
+  onAuthComplete,
   stopDisabled = false,
 }: RunLoadingCardProps) {
   const [now, setNow] = useState(() => Date.now());
+  const signInCopy = useMemo(() => signInCopyForUrl(config.start_url), [config.start_url]);
 
   useEffect(() => {
     if (!startedAt) return;
@@ -75,13 +84,25 @@ export function RunLoadingCard({
   const currentPersona = job?.progress.current_persona;
   const currentSession = job?.progress.current_session;
   const stopping = job?.status === "cancelling";
+  const waitingForLogin = job?.progress.phase === "waiting_for_login";
+  const linkLabel = formatLinkLabel(config.start_url);
+  const taskSteps = config.tasks.map((task) => task.trim()).filter(Boolean);
+  const openingPhase = progress < 0.2;
 
   return (
     <section className="card run-loading-card" aria-live="polite">
       <header className="run-loading-head">
         <div>
-          <p className="run-loading-kicker">Run in progress</p>
-          <h3>{currentPersona ? `Running ${currentPersona} now.` : "We're walking the flow now."}</h3>
+          <p className="run-loading-kicker">Opening your link and walking through your steps</p>
+          <h3>
+            {waitingForLogin && signInCopy
+              ? signInCopy.waitingTitle
+              : openingPhase
+                ? `Opening ${linkLabel || "your prototype"}…`
+                : currentPersona
+                  ? `${currentPersona} is trying your steps now`
+                  : "Walking through your steps…"}
+          </h3>
         </div>
         <div className="run-loading-actions">
           <span className="badge badge-info">
@@ -100,6 +121,23 @@ export function RunLoadingCard({
         </div>
       </header>
 
+      <div className="run-loading-target">
+        <div className="run-loading-target-row">
+          <span className="muted small">Opening</span>
+          <strong className="run-loading-url" title={config.start_url}>
+            {linkLabel || config.start_url || "Not set"}
+          </strong>
+        </div>
+        {taskSteps.length > 0 && (
+          <ol className="run-loading-tasks muted small">
+            {taskSteps.slice(0, 4).map((step, index) => (
+              <li key={index}>{step}</li>
+            ))}
+            {taskSteps.length > 4 && <li>+{taskSteps.length - 4} more steps</li>}
+          </ol>
+        )}
+      </div>
+
       <div className="run-loading-overview">
         <div className="run-loading-time">
           <span className="muted small">Estimated time left</span>
@@ -112,11 +150,15 @@ export function RunLoadingCard({
         </div>
 
         <div className="run-loading-facts">
-          <span>{sessionCount} sessions</span>
+          <span>{sessionCount} tries total</span>
           <span>{completedSessions} done</span>
-          <span>{segmentCount} segment profile{segmentCount === 1 ? "" : "s"}</span>
-          <span>{config.runs_per_persona} run{config.runs_per_persona === 1 ? "" : "s"} each</span>
-          {currentSession ? <span>Session {currentSession} in flight</span> : null}
+          <span>
+            {segmentCount} traveler type{segmentCount === 1 ? "" : "s"}
+          </span>
+          <span>
+            {config.runs_per_persona} try{config.runs_per_persona === 1 ? "" : "ies"} each
+          </span>
+          {currentSession ? <span>Try {currentSession} in progress</span> : null}
           {options.capture_screenshots && <span>Screenshots on</span>}
         </div>
       </div>
@@ -127,12 +169,30 @@ export function RunLoadingCard({
 
       <p className="run-loading-phase">{phaseText}</p>
 
+      {waitingForLogin && onAuthComplete && signInCopy && (
+        <div
+          className="figma-login-panel"
+          role="region"
+          aria-label={`Sign in to ${signInCopy.providerLabel}`}
+        >
+          <h4>{signInCopy.panelTitle}</h4>
+          <ol className="figma-login-steps muted small">
+            {signInCopy.steps.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+          <button type="button" className="btn-primary" onClick={onAuthComplete}>
+            {signInCopy.continueButton}
+          </button>
+        </div>
+      )}
+
       <p className="muted small run-loading-note">
         {job
           ? stopping
-            ? "We’ve sent the stop request and are wrapping up the current work before returning partial results."
-            : "This progress is coming from the backend as each session completes, so the estimate tightens up as the run goes."
-          : "This estimate is based on your current run settings and usually lands pretty close, but slower pages and heavier flows can push it out a bit."}
+            ? "We’ve sent the stop request and are wrapping up before returning partial results."
+            : "Progress updates as each try finishes, so the time estimate gets more accurate as we go."
+          : "This estimate is based on your settings. Slower pages or longer tasks can push it out a bit."}
       </p>
     </section>
   );

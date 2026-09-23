@@ -33,16 +33,20 @@ from scripts.generic_usability_stress import run_stress_benchmark  # noqa: E402
 from scripts.heuristic_review import review_flow  # noqa: E402
 from scripts.persona_segments import (  # noqa: E402
     LEVER_DEFINITIONS,
+    LEVER_GROUPS,
     LOBS,
     SEGMENT_PRESETS,
     get_segments_for_lob,
     get_segment_preset,
     normalize_persona,
 )
+from scripts.tlx_review import review_flow as review_tlx_flow  # noqa: E402
 
 RUN_LOCK = threading.Lock()
 RUN_JOBS_LOCK = threading.Lock()
 RUN_JOBS: dict[str, dict[str, Any]] = {}
+AUTH_RESUME_LOCK = threading.Lock()
+AUTH_RESUME_EVENTS: dict[str, threading.Event] = {}
 
 app = FastAPI(
     title="AI Usability Research App",
@@ -108,6 +112,47 @@ class FlowHeuristicReview(BaseModel):
     session_reviews: list[SessionHeuristicReview] = Field(default_factory=list)
 
 
+class TlxSubscaleScore(BaseModel):
+    id: str
+    name: str
+    score: float = Field(ge=0, le=100)
+    rationale: str = ""
+
+
+class SessionTlxReview(BaseModel):
+    session_id: str
+    persona: str
+    overall: float
+    confidence: float = Field(ge=0, le=1)
+    subscales: list[TlxSubscaleScore] = Field(default_factory=list)
+    mental_demand: int = Field(ge=0, le=100)
+    physical_demand: int = Field(ge=0, le=100)
+    temporal_demand: int = Field(ge=0, le=100)
+    performance: int = Field(ge=0, le=100)
+    effort: int = Field(ge=0, le=100)
+    frustration: int = Field(ge=0, le=100)
+
+
+class PersonaTlxReview(BaseModel):
+    persona: str
+    overall: Optional[float] = None
+    confidence: float = Field(ge=0, le=1)
+    subscales: list[TlxSubscaleScore] = Field(default_factory=list)
+    session_count: int = 0
+
+
+class FlowTlxReview(BaseModel):
+    overall: Optional[float] = None
+    confidence: Optional[float] = None
+    disclaimer: str = (
+        "Directional agent workload forecast (Synthetic TLX). "
+        "Not a human NASA TLX questionnaire."
+    )
+    subscales: list[TlxSubscaleScore] = Field(default_factory=list)
+    session_reviews: list[SessionTlxReview] = Field(default_factory=list)
+    persona_reviews: list[PersonaTlxReview] = Field(default_factory=list)
+
+
 class LeverOption(BaseModel):
     value: str
     label: str
@@ -117,6 +162,7 @@ class LeverDefinition(BaseModel):
     id: str
     name: str
     summary: str
+    group: str = ""
     options: list[LeverOption]
 
 
@@ -147,9 +193,16 @@ class Lob(BaseModel):
     summary: str = ""
 
 
+class LeverGroup(BaseModel):
+    id: str
+    name: str
+    summary: str = ""
+
+
 class ConfigPayload(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
     include_heuristics: bool = False
+    include_tlx: bool = True
     capture_screenshots: bool = False
 
 
@@ -162,6 +215,13 @@ class HeuristicReviewPayload(BaseModel):
 
     sessions: list[SessionHeuristicReview] = Field(default_factory=list)
     raw_sessions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class TlxReviewPayload(BaseModel):
+    """Run Synthetic TLX scoring against pre-captured artifacts."""
+
+    raw_sessions: list[dict[str, Any]] = Field(default_factory=list)
+    persona_profiles: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class StressPayload(BaseModel):
@@ -191,13 +251,17 @@ def estimate_run_duration_seconds(
     config: dict[str, Any],
     include_heuristics: bool,
     capture_screenshots: bool,
+    include_tlx: bool = True,
 ) -> int:
     session_count = max(1, len(config.get("personas", [])) * int(config.get("runs_per_persona", 1)))
     base_per_session = int(clamp(round(int(config.get("run_timeout_s", 120)) * 0.28), 25, 55))
     screenshot_penalty = 6 if capture_screenshots else 0
     heuristic_penalty = 2 if include_heuristics else 0
+    tlx_penalty = 1 if include_tlx else 0
     base_overhead = 20
-    return base_overhead + session_count * (base_per_session + screenshot_penalty + heuristic_penalty)
+    return base_overhead + session_count * (
+        base_per_session + screenshot_penalty + heuristic_penalty + tlx_penalty
+    )
 
 
 def _bool_value(value: Any) -> bool:
@@ -228,6 +292,8 @@ def _status_for_row(row: dict[str, Any]) -> str:
 
 
 def _download_path(path_value: str) -> str | None:
+    if not path_value:
+        return None
     candidate = Path(path_value).resolve()
     output_root = (WORKSPACE_ROOT / "output").resolve()
     try:
@@ -346,33 +412,74 @@ def build_persona_summaries(session_rows: list[dict[str, Any]]) -> list[dict[str
     return summaries
 
 
+def _persona_profile_index(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    index: dict[str, dict[str, Any]] = {}
+    for persona in config.get("personas", []) or []:
+        name = str(persona.get("name") or "").strip()
+        if not name:
+            continue
+        index[name] = {
+            "exploration": persona.get("exploration"),
+            "patience": persona.get("patience"),
+            "attention": persona.get("attention"),
+            "error_rate": persona.get("error_rate"),
+            "segment": persona.get("segment"),
+            "levers": persona.get("levers") or {},
+        }
+    return index
+
+
 def build_run_response(
     config: dict[str, Any],
     rows: list[dict[str, Any]],
     warnings: list[str],
     include_heuristics: bool,
     response_status: str = "completed",
+    include_tlx: bool = True,
 ) -> dict[str, Any]:
     session_rows = build_session_rows(rows, config)
+    output_file_value = str(config.get("output_file") or "")
     response: dict[str, Any] = {
         "status": response_status,
         "experiment_name": config["experiment_name"],
         "start_url": config["start_url"],
         "warnings": warnings,
-        "output_file": config["output_file"],
-        "download_path": _download_path(config["output_file"]),
+        # output_file is now informational only. The API does not auto-save
+        # the CSV; the UI builds it on demand from the rows above.
+        "output_file": output_file_value,
+        "download_path": _download_path(output_file_value),
         "summary": summarize_rows(rows),
         "sessions": session_rows,
         "persona_summaries": build_persona_summaries(session_rows),
     }
 
+    sessions: list[tuple[str, list[dict[str, Any]]]] = []
+    session_metrics: list[dict[str, Any]] = []
+    for row in rows:
+        artifacts = row.get("_artifacts") or []
+        persona = row.get("persona") or ""
+        sessions.append((persona, artifacts))
+        session_metrics.append(
+            {
+                "steps": row.get("steps"),
+                "hesitation": row.get("hesitation"),
+                "misclick": row.get("misclick"),
+                "backtrack": row.get("backtrack"),
+                "abandoned": row.get("abandoned"),
+                "nav_path": row.get("nav_path"),
+                "status": _status_for_row(row),
+            }
+        )
+
     if include_heuristics:
-        sessions: list[tuple[str, list[dict[str, Any]]]] = []
-        for row in rows:
-            artifacts = row.get("_artifacts") or []
-            persona = row.get("persona") or ""
-            sessions.append((persona, artifacts))
         response["heuristic_review"] = review_flow(sessions)
+
+    if include_tlx:
+        response["tlx_review"] = review_tlx_flow(
+            sessions,
+            session_metrics=session_metrics,
+            persona_profiles=_persona_profile_index(config),
+        )
 
     return response
 
@@ -384,6 +491,8 @@ def _job_percent(phase: str, total_sessions: int, completed_sessions: int) -> fl
         return 0.0
     if phase == "starting":
         return 0.04
+    if phase == "waiting_for_login":
+        return 0.06
     if phase == "browser_ready":
         return 0.08
     if phase == "cancelling":
@@ -533,6 +642,13 @@ def _fail_job(job_id: str, error: Exception) -> None:
 
 
 def _run_job(job_id: str, config: dict[str, Any], warnings: list[str], payload: ConfigPayload) -> None:
+    browser_conf = config.get("browser") or {}
+    auth_resume_event: threading.Event | None = None
+    if bool(browser_conf.get("interactive_auth")):
+        auth_resume_event = threading.Event()
+        with AUTH_RESUME_LOCK:
+            AUTH_RESUME_EVENTS[job_id] = auth_resume_event
+
     try:
         with RUN_JOBS_LOCK:
             job = RUN_JOBS.get(job_id)
@@ -544,21 +660,37 @@ def _run_job(job_id: str, config: dict[str, Any], warnings: list[str], payload: 
                     config,
                     progress_callback=lambda event: _update_job_progress(job_id, **event),
                     should_cancel=(lambda: bool(cancel_event and cancel_event.is_set())),
+                    auth_resume_event=auth_resume_event,
                 )
             )
             total_sessions = max(1, len(config["personas"]) * int(config["runs_per_persona"]))
             was_cancelled = bool(cancel_event and cancel_event.is_set())
-            if payload.include_heuristics and rows:
+            scoring = payload.include_heuristics or payload.include_tlx
+            if scoring and rows:
+                if payload.include_heuristics and payload.include_tlx:
+                    score_message = (
+                        "Scoring heuristic signals and Synthetic TLX for the completed sessions."
+                        if was_cancelled
+                        else "Scoring heuristic signals, Synthetic TLX, and packaging the dashboard."
+                    )
+                elif payload.include_tlx:
+                    score_message = (
+                        "Scoring Synthetic TLX for the completed sessions."
+                        if was_cancelled
+                        else "Scoring Synthetic TLX and packaging the dashboard."
+                    )
+                else:
+                    score_message = (
+                        "Scoring heuristic signals for the completed sessions."
+                        if was_cancelled
+                        else "Scoring heuristic signals and packaging the dashboard."
+                    )
                 _update_job_progress(
                     job_id,
                     phase="cancelling" if was_cancelled else "heuristics",
                     total_sessions=total_sessions,
                     completed_sessions=len(rows),
-                    message=(
-                        "Scoring heuristic signals for the completed sessions."
-                        if was_cancelled
-                        else "Scoring heuristic signals and packaging the dashboard."
-                    ),
+                    message=score_message,
                 )
             else:
                 _update_job_progress(
@@ -579,6 +711,7 @@ def _run_job(job_id: str, config: dict[str, Any], warnings: list[str], payload: 
                 warnings,
                 payload.include_heuristics,
                 response_status="cancelled" if was_cancelled else "completed",
+                include_tlx=bool(payload.include_tlx),
             )
 
         if was_cancelled:
@@ -587,6 +720,9 @@ def _run_job(job_id: str, config: dict[str, Any], warnings: list[str], payload: 
             _complete_job(job_id, result)
     except Exception as exc:  # pragma: no cover - server-side safety net
         _fail_job(job_id, exc)
+    finally:
+        with AUTH_RESUME_LOCK:
+            AUTH_RESUME_EVENTS.pop(job_id, None)
 
 
 def build_config(override: dict[str, Any]) -> dict[str, Any]:
@@ -596,6 +732,19 @@ def build_config(override: dict[str, Any]) -> dict[str, Any]:
     # behavior floats. Fill the legacy 4-float model in so the runner is happy.
     config["personas"] = [normalize_persona(persona) for persona in config.get("personas", [])]
     return config
+
+
+def _url_needs_interactive_auth(start_url: str) -> bool:
+    lower = start_url.lower()
+    if "figma.com" in lower:
+        return True
+    try:
+        host = (urlparse(start_url).hostname or "").lower()
+    except Exception:
+        host = ""
+    if not host and ("github.com" in lower or "github.io" in lower):
+        return True
+    return host == "github.com" or host.endswith(".github.com") or host.endswith(".github.io")
 
 
 def validate_config(config: dict[str, Any]) -> tuple[list[str], list[str]]:
@@ -610,10 +759,17 @@ def validate_config(config: dict[str, Any]) -> tuple[list[str], list[str]]:
         parsed = urlparse(config["start_url"])
         if parsed.scheme not in {"http", "https", "file"}:
             warnings.append("Start URL does not use http, https, or file.")
+        if _url_needs_interactive_auth(config["start_url"]):
+            browser_conf = config.get("browser") or {}
+            if not browser_conf.get("interactive_auth"):
+                warnings.append(
+                    "This link usually requires you to sign in first. Run from the web app so we "
+                    "can open a browser window for one-time login."
+                )
     if not config["tasks"]:
         errors.append("Add at least one task.")
-    if not config["output_file"]:
-        errors.append("Output CSV path is required.")
+    # output_file is optional for API runs (the UI builds the CSV on demand
+    # via a Download button). CLI / notebook runs still pass a real path.
     if not config["personas"]:
         errors.append("At least one persona is required.")
     if not config["success_criteria"]["url_contains"] and not config["success_criteria"]["text_contains"]:
@@ -680,8 +836,24 @@ def healthz() -> dict[str, Any]:
 
 @app.get("/personas/levers")
 def list_levers() -> list[LeverDefinition]:
-    """Return the catalog of persona levers (lever id, copy, options)."""
+    """Return the catalog of persona levers (lever id, copy, options).
+
+    Each lever carries a ``group`` id matching one of the entries returned
+    from ``GET /personas/lever-groups``. UIs use that to render the editor
+    in the same four buckets users already see.
+    """
     return [LeverDefinition.model_validate(lever) for lever in LEVER_DEFINITIONS]
+
+
+@app.get("/personas/lever-groups")
+def list_lever_groups() -> list[LeverGroup]:
+    """Return the catalog of lever groups.
+
+    The UI uses these to render the persona editor in four buckets
+    (Mindset / Pressure / Risk & trust / Context). Each lever carries a
+    ``group`` id that points into this list.
+    """
+    return [LeverGroup.model_validate(group) for group in LEVER_GROUPS]
 
 
 @app.get("/personas/lobs")
@@ -742,13 +914,16 @@ def create_run(payload: ConfigPayload) -> dict[str, Any]:
     if errors:
         raise HTTPException(status_code=400, detail={"errors": errors, "warnings": warnings})
 
-    config["output_file"] = normalize_output_path(config["output_file"])
+    # API runs no longer auto-save the CSV; the UI offers a Download button
+    # that builds the CSV from the response in the browser.
+    config["output_file"] = ""
     config["capture_screenshots"] = bool(payload.capture_screenshots)
     total_sessions = max(1, len(config["personas"]) * int(config["runs_per_persona"]))
     estimated_total_seconds = estimate_run_duration_seconds(
         config,
         include_heuristics=bool(payload.include_heuristics),
         capture_screenshots=bool(payload.capture_screenshots),
+        include_tlx=bool(payload.include_tlx),
     )
     created_at = utcnow_iso()
     job_id = uuid.uuid4().hex
@@ -824,6 +999,31 @@ def cancel_run(job_id: str) -> dict[str, Any]:
         return _public_job(job)
 
 
+@app.post("/runs/{job_id}/auth-complete")
+def complete_run_auth(job_id: str) -> dict[str, Any]:
+    with AUTH_RESUME_LOCK:
+        resume_event = AUTH_RESUME_EVENTS.get(job_id)
+    if resume_event is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No sign-in window is waiting for this run. It may have already continued.",
+        )
+
+    resume_event.set()
+
+    with RUN_JOBS_LOCK:
+        job = RUN_JOBS.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Run not found.")
+        job["progress"] = {
+            **job["progress"],
+            "phase": "starting",
+            "message": "Signed in — saving your session and starting the walkthrough.",
+            "updated_at": utcnow_iso(),
+        }
+        return _public_job(job)
+
+
 @app.post("/run")
 def run(payload: ConfigPayload) -> dict[str, Any]:
     config = build_config(payload.config)
@@ -831,12 +1031,20 @@ def run(payload: ConfigPayload) -> dict[str, Any]:
     if errors:
         raise HTTPException(status_code=400, detail={"errors": errors, "warnings": warnings})
 
-    config["output_file"] = normalize_output_path(config["output_file"])
+    # API runs no longer auto-save the CSV; the UI offers a Download button
+    # that builds the CSV from the response in the browser.
+    config["output_file"] = ""
     config["capture_screenshots"] = bool(payload.capture_screenshots)
 
     with RUN_LOCK:
         rows = asyncio.run(run_experiment(config))
-    return build_run_response(config, rows, warnings, payload.include_heuristics)
+    return build_run_response(
+        config,
+        rows,
+        warnings,
+        payload.include_heuristics,
+        include_tlx=bool(payload.include_tlx),
+    )
 
 
 @app.post("/heuristics/review")
@@ -870,6 +1078,40 @@ def heuristics_review(payload: HeuristicReviewPayload) -> FlowHeuristicReview:
         )
 
     return FlowHeuristicReview.model_validate(review_flow(sessions))
+
+
+@app.post("/tlx/review")
+def tlx_review(payload: TlxReviewPayload) -> FlowTlxReview:
+    """Score Synthetic TLX from raw step artifacts without re-running Playwright."""
+    if not payload.raw_sessions:
+        raise HTTPException(status_code=400, detail="No sessions supplied.")
+
+    sessions = [
+        (
+            str(entry.get("persona", "")),
+            list(entry.get("artifacts") or []),
+        )
+        for entry in payload.raw_sessions
+    ]
+    session_metrics = [
+        {
+            "steps": entry.get("steps"),
+            "hesitation": entry.get("hesitation"),
+            "misclick": entry.get("misclick"),
+            "backtrack": entry.get("backtrack"),
+            "abandoned": entry.get("abandoned"),
+            "nav_path": entry.get("nav_path"),
+            "status": entry.get("status"),
+        }
+        for entry in payload.raw_sessions
+    ]
+    return FlowTlxReview.model_validate(
+        review_tlx_flow(
+            sessions,
+            session_metrics=session_metrics,
+            persona_profiles=payload.persona_profiles,
+        )
+    )
 
 
 @app.get("/artifacts/{path:path}")

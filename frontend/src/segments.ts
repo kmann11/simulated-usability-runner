@@ -9,7 +9,7 @@ export const LOBS_FALLBACK: Lob[] = [
   {
     id: "expedia",
     name: "Expedia",
-    summary: "Multi-product OTA — packages, flights, hotels, cars, activities.",
+    summary: "Multi-product OTA: packages, flights, hotels, cars, activities.",
   },
   {
     id: "hotels_com",
@@ -41,60 +41,31 @@ const LEVEL_OPTIONS = [
   { value: "high", label: "High" },
 ];
 
-// UI-only grouping that organizes the 10 levers into 4 small categories so the
-// editor doesn't read as a flat wall of dropdowns.
-export const LEVER_GROUPS: { id: string; name: string; lever_ids: string[] }[] = [
-  {
-    id: "mindset",
-    name: "Mindset",
-    lever_ids: [
-      "info_processing_style",
-      "cognitive_load_sensitivity",
-      "prior_familiarity",
-    ],
-  },
-  {
-    id: "pressure",
-    name: "Pressure",
-    lever_ids: [
-      "time_pressure",
-      "budget_sensitivity",
-      "abandonment_threshold",
-    ],
-  },
-  {
-    id: "risk_trust",
-    name: "Risk & trust",
-    lever_ids: [
-      "trust_baseline",
-      "risk_tolerance",
-      "error_propensity",
-    ],
-  },
-  {
-    id: "context",
-    name: "Context",
-    lever_ids: ["device_context"],
-  },
-];
+// Group metadata lives on the backend now (see scripts/persona_segments.py
+// LEVER_GROUPS) and is served via GET /personas/lever-groups. Each lever
+// below carries its `group` id so membership travels with the lever itself.
+// LEVER_GROUPS_FALLBACK (further down this file) covers offline rendering.
 
 export const LEVER_DEFINITIONS: LeverDefinition[] = [
   {
     id: "trust_baseline",
     name: "Trust baseline",
     summary: "How much the tester trusts the platform out of the gate.",
+    group: "risk_trust",
     options: LEVEL_OPTIONS,
   },
   {
     id: "time_pressure",
     name: "Time pressure",
     summary: "How much hurry they're in. High = books in days, not weeks.",
+    group: "pressure",
     options: LEVEL_OPTIONS,
   },
   {
     id: "info_processing_style",
     name: "Info processing style",
     summary: "Skimmer vs deep reader.",
+    group: "mindset",
     options: [
       { value: "skimmer", label: "Skimmer" },
       { value: "deep_reader", label: "Deep reader" },
@@ -104,24 +75,28 @@ export const LEVER_DEFINITIONS: LeverDefinition[] = [
     id: "risk_tolerance",
     name: "Risk tolerance",
     summary: "How willing to try unfamiliar or unverified options.",
+    group: "risk_trust",
     options: LEVEL_OPTIONS,
   },
   {
     id: "cognitive_load_sensitivity",
     name: "Cognitive load sensitivity",
     summary: "How easily overwhelmed by complex flows or copy.",
+    group: "mindset",
     options: LEVEL_OPTIONS,
   },
   {
     id: "error_propensity",
     name: "Error propensity",
     summary: "How likely to slip up, misclick, or skip steps.",
+    group: "risk_trust",
     options: LEVEL_OPTIONS,
   },
   {
     id: "device_context",
     name: "Device / context",
     summary: "Where they're using the site from.",
+    group: "context",
     options: [
       { value: "desktop", label: "Desktop" },
       { value: "mobile", label: "Mobile" },
@@ -132,6 +107,7 @@ export const LEVER_DEFINITIONS: LeverDefinition[] = [
     id: "budget_sensitivity",
     name: "Budget sensitivity",
     summary: "How price-conscious. High = chases deals; Low = pays for premium.",
+    group: "pressure",
     options: LEVEL_OPTIONS,
   },
   {
@@ -139,13 +115,42 @@ export const LEVER_DEFINITIONS: LeverDefinition[] = [
     name: "Abandonment threshold",
     summary:
       "How quickly they bail when frustrated. Low = patient; High = bounces fast.",
+    group: "pressure",
     options: LEVEL_OPTIONS,
   },
   {
-    id: "prior_familiarity",
+    id: "prior_product_familiarity",
     name: "Prior product familiarity",
     summary: "How familiar they are with this kind of product.",
+    group: "mindset",
     options: LEVEL_OPTIONS,
+  },
+];
+
+// Mirrors scripts/persona_segments.py's LEVER_GROUPS. Ordered fallback for
+// group metadata (id + display name). Lever-to-group membership now travels
+// on the lever itself via `group`, so callers only need this list for
+// rendering order and display names.
+export const LEVER_GROUPS_FALLBACK = [
+  {
+    id: "mindset",
+    name: "Mindset",
+    summary: "How the tester takes in and processes information.",
+  },
+  {
+    id: "pressure",
+    name: "Pressure",
+    summary: "Time, budget, and patience constraints.",
+  },
+  {
+    id: "risk_trust",
+    name: "Risk & trust",
+    summary: "How cautious or confident they are with the platform and the decision.",
+  },
+  {
+    id: "context",
+    name: "Context",
+    summary: "Where and how they're using the site.",
   },
 ];
 
@@ -175,7 +180,7 @@ export const SEGMENT_PRESETS: SegmentPreset[] = [
       device_context: "desktop",
       budget_sensitivity: "low",
       abandonment_threshold: "low",
-      prior_familiarity: "high",
+      prior_product_familiarity: "high",
     },
   },
   {
@@ -200,7 +205,7 @@ export const SEGMENT_PRESETS: SegmentPreset[] = [
       device_context: "desktop",
       budget_sensitivity: "high",
       abandonment_threshold: "medium",
-      prior_familiarity: "medium",
+      prior_product_familiarity: "medium",
     },
   },
   {
@@ -225,7 +230,7 @@ export const SEGMENT_PRESETS: SegmentPreset[] = [
       device_context: "mixed",
       budget_sensitivity: "medium",
       abandonment_threshold: "medium",
-      prior_familiarity: "medium-high",
+      prior_product_familiarity: "medium-high",
     },
   },
   {
@@ -250,7 +255,7 @@ export const SEGMENT_PRESETS: SegmentPreset[] = [
       device_context: "mixed",
       budget_sensitivity: "medium",
       abandonment_threshold: "medium",
-      prior_familiarity: "medium",
+      prior_product_familiarity: "medium",
     },
   },
 
@@ -277,7 +282,7 @@ export const SEGMENT_PRESETS: SegmentPreset[] = [
       device_context: "desktop",
       budget_sensitivity: "medium",
       abandonment_threshold: "medium",
-      prior_familiarity: "medium",
+      prior_product_familiarity: "medium",
     },
   },
   {
@@ -302,7 +307,7 @@ export const SEGMENT_PRESETS: SegmentPreset[] = [
       device_context: "desktop",
       budget_sensitivity: "medium",
       abandonment_threshold: "medium",
-      prior_familiarity: "medium",
+      prior_product_familiarity: "medium",
     },
   },
   {
@@ -327,7 +332,7 @@ export const SEGMENT_PRESETS: SegmentPreset[] = [
       device_context: "desktop",
       budget_sensitivity: "medium-high",
       abandonment_threshold: "medium",
-      prior_familiarity: "medium",
+      prior_product_familiarity: "medium",
     },
   },
   {
@@ -352,7 +357,7 @@ export const SEGMENT_PRESETS: SegmentPreset[] = [
       device_context: "desktop",
       budget_sensitivity: "high",
       abandonment_threshold: "low",
-      prior_familiarity: "medium",
+      prior_product_familiarity: "medium",
     },
   },
   {
@@ -377,7 +382,7 @@ export const SEGMENT_PRESETS: SegmentPreset[] = [
       device_context: "mobile",
       budget_sensitivity: "high",
       abandonment_threshold: "high",
-      prior_familiarity: "low",
+      prior_product_familiarity: "low",
     },
   },
 
@@ -403,7 +408,7 @@ export const SEGMENT_PRESETS: SegmentPreset[] = [
       device_context: "mobile",
       budget_sensitivity: "medium-high",
       abandonment_threshold: "medium-high",
-      prior_familiarity: "high",
+      prior_product_familiarity: "high",
     },
   },
   {
@@ -428,7 +433,7 @@ export const SEGMENT_PRESETS: SegmentPreset[] = [
       device_context: "mixed",
       budget_sensitivity: "medium",
       abandonment_threshold: "medium",
-      prior_familiarity: "high",
+      prior_product_familiarity: "high",
     },
   },
   {
@@ -453,7 +458,7 @@ export const SEGMENT_PRESETS: SegmentPreset[] = [
       device_context: "mobile",
       budget_sensitivity: "medium",
       abandonment_threshold: "high",
-      prior_familiarity: "medium",
+      prior_product_familiarity: "medium",
     },
   },
 
@@ -483,7 +488,7 @@ export const SEGMENT_PRESETS: SegmentPreset[] = [
       device_context: "mixed",
       budget_sensitivity: "high",
       abandonment_threshold: "medium",
-      prior_familiarity: "medium",
+      prior_product_familiarity: "medium",
     },
   },
   {
@@ -508,7 +513,7 @@ export const SEGMENT_PRESETS: SegmentPreset[] = [
       device_context: "desktop",
       budget_sensitivity: "medium-high",
       abandonment_threshold: "medium",
-      prior_familiarity: "high",
+      prior_product_familiarity: "high",
     },
   },
   {
@@ -533,7 +538,7 @@ export const SEGMENT_PRESETS: SegmentPreset[] = [
       device_context: "desktop",
       budget_sensitivity: "high",
       abandonment_threshold: "medium-high",
-      prior_familiarity: "high",
+      prior_product_familiarity: "high",
     },
   },
 
@@ -560,7 +565,7 @@ export const SEGMENT_PRESETS: SegmentPreset[] = [
       device_context: "mobile",
       budget_sensitivity: "high",
       abandonment_threshold: "high",
-      prior_familiarity: "low-medium",
+      prior_product_familiarity: "low-medium",
     },
   },
   {
@@ -585,7 +590,7 @@ export const SEGMENT_PRESETS: SegmentPreset[] = [
       device_context: "mixed",
       budget_sensitivity: "low",
       abandonment_threshold: "low-medium",
-      prior_familiarity: "high",
+      prior_product_familiarity: "high",
     },
   },
 ];

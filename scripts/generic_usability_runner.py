@@ -9,6 +9,8 @@ import json
 import os
 import random
 import re
+import sys
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -38,9 +40,47 @@ DEFAULT_GENERIC_CONFIG = {
     "random_seed": None,
     "output_file": "output/generic_usability_results.csv",
     "model": os.getenv("USABILITY_MODEL", "gpt-4o"),
-    "run_timeout_s": 120,
+    # Friendly defaults for real consumer sites (Expedia, Vrbo, etc.):
+    # - run_timeout_s 240 gives the AI 4 minutes to walk + decide per session
+    # - hydrate_timeout_ms 15000 stops waiting for "fully idle" sooner, since
+    #   real OTA pages never go idle (analytics, lazy-loaded rails, etc.)
+    "run_timeout_s": 240,
     "sleep_scale": 0.6,
-    "hydrate_timeout_ms": 45000,
+    "hydrate_timeout_ms": 15000,
+    "browser": {
+        # Flip to True if running headless (CI / no display).
+        # Headful is much harder for bot-detection to flag.
+        "headless": False,
+        # Real Chrome on macOS. Keep the Chrome major version current-ish.
+        "user_agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/130.0.0.0 Safari/537.36"
+        ),
+        "viewport": {"width": 1440, "height": 900},
+        "locale": "en-US",
+        "timezone_id": "America/Los_Angeles",
+        "color_scheme": "light",
+        # Apply inline stealth patches (navigator.webdriver, plugins,
+        # languages, webgl vendor, permissions query). Zero deps.
+        "use_stealth": True,
+        # Optional path to a pre-warmed Playwright storage_state JSON.
+        # Produced by scripts/warm_up_session.py. This is what unlocks
+        # aggressive sites like expedia.com — you complete the real
+        # browser bot-check once, save the state, then the runner
+        # reuses those cookies / tokens for every session.
+        "storage_state_path": None,
+        # When True, before the headless persona loop runs the script opens
+        # a single headed browser at start_url, waits for the operator to
+        # press Enter in the terminal (after completing SSO / login), and
+        # saves the resulting cookies + localStorage to storage_state_path.
+        # Every persona run then inherits the authenticated session via the
+        # normal storage_state plumbing. Requires storage_state_path to be
+        # set and a TTY — silently skipped in non-interactive contexts
+        # (e.g. when invoked from the FastAPI server) so the API doesn't
+        # hang on input().
+        "interactive_auth": False,
+    },
     "observation_char_limit": 2500,
     "candidate_limits": {
         "click": 12,
@@ -1055,17 +1095,181 @@ async def main(config_path: str | None) -> None:
         random.seed(int(config["random_seed"]))
 
     results = await run_experiment(config)
-    print(f"Wrote results to {config['output_file']}", flush=True)
+    output_file = str(config.get("output_file") or "").strip()
+    if output_file:
+        print(f"Wrote results to {output_file}", flush=True)
+    else:
+        print(f"Completed {len(results)} runs (no CSV written: output_file is empty).", flush=True)
+
+
+STEALTH_INIT_SCRIPT = """
+// ---- Inline stealth patches (no external deps) ----
+// Hide the "I'm automated" giveaways that trip up DataDome / Akamai / Cloudflare.
+Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+// Non-empty plugins list
+Object.defineProperty(navigator, 'plugins', {
+  get: () => [1, 2, 3, 4, 5],
+});
+
+// Normal language setup
+Object.defineProperty(navigator, 'languages', {
+  get: () => ['en-US', 'en'],
+});
+
+// Hardware concurrency + deviceMemory to realistic values
+try { Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 }); } catch (e) {}
+try { Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 }); } catch (e) {}
+
+// Permissions.query: stop returning 'prompt' for Notification perm, which real Chrome
+// never does for a session that has a granted/denied permission policy.
+const originalPermissionsQuery = window.navigator.permissions && window.navigator.permissions.query;
+if (originalPermissionsQuery) {
+  window.navigator.permissions.query = (parameters) =>
+    parameters && parameters.name === 'notifications'
+      ? Promise.resolve({ state: Notification.permission })
+      : originalPermissionsQuery(parameters);
+}
+
+// Chrome runtime stub (headless Chromium doesn't expose window.chrome)
+if (!window.chrome) {
+  window.chrome = { runtime: {}, loadTimes: function () {}, csi: function () {} };
+}
+
+// WebGL vendor/renderer unmask — headless Chromium returns "Google Inc." which is a tell
+try {
+  const getParameter = WebGLRenderingContext.prototype.getParameter;
+  WebGLRenderingContext.prototype.getParameter = function (parameter) {
+    if (parameter === 37445) return 'Intel Inc.';
+    if (parameter === 37446) return 'Intel Iris OpenGL Engine';
+    return getParameter.apply(this, arguments);
+  };
+} catch (e) {}
+"""
+
+
+async def _wait_for_auth_handoff(
+    resume_event: threading.Event | None,
+    progress_callback: Callable[..., None] | None = None,
+) -> None:
+    """Pause until the operator confirms login (UI button or terminal Enter)."""
+    if resume_event is not None:
+        if progress_callback:
+            progress_callback(
+                phase="waiting_for_login",
+                message=(
+                    "A browser window opened for you to sign in. "
+                    "When the page you want to test is on screen, click “I'm signed in” in the app."
+                ),
+            )
+        while not resume_event.is_set():
+            await asyncio.sleep(0.3)
+        return
+
+    if not sys.stdin.isatty():
+        print(
+            "[auth] interactive_auth enabled but no TTY or UI resume signal — skipping. "
+            "Enable sign-in from the web app or run from a terminal.",
+            flush=True,
+        )
+        return
+
+    await asyncio.get_event_loop().run_in_executor(
+        None, input, "Press Enter to save session and start the run... "
+    )
+
+
+async def _interactive_auth_warmup(
+    start_url: str,
+    storage_state_path: str,
+    user_agent: str | None = None,
+    viewport: dict[str, int] | None = None,
+    locale: str | None = None,
+    timezone_id: str | None = None,
+    resume_event: threading.Event | None = None,
+    progress_callback: Callable[..., None] | None = None,
+) -> None:
+    """Headed browser pause for SSO / manual login before the headless run.
+
+    Opens the start_url in a real Chrome window, waits for the operator to
+    finish logging in (terminal Enter or API/UI resume signal), then snapshots
+    cookies + localStorage to storage_state_path. The main run picks the
+    state up via the existing storage_state_path config field, so every
+    persona / run inherits the authenticated session.
+    """
+    out = Path(storage_state_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    if resume_event is None and not sys.stdin.isatty():
+        print(
+            "[auth] interactive_auth enabled but no TTY attached — skipping. "
+            "Run the script from a terminal to use it.",
+            flush=True,
+        )
+        return
+
+    if progress_callback:
+        progress_callback(
+            phase="waiting_for_login",
+            message="Opening a browser window so you can sign in…",
+        )
+
+    print(
+        f"[auth] Opening {start_url} in a headed browser for manual login...",
+        flush=True,
+    )
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(
+            headless=False,
+            channel="chrome",
+            args=["--disable-blink-features=AutomationControlled"],
+            ignore_default_args=["--enable-automation"],
+        )
+        ctx_kwargs: dict[str, Any] = {}
+        if user_agent:
+            ctx_kwargs["user_agent"] = user_agent
+        if viewport:
+            ctx_kwargs["viewport"] = viewport
+        if locale:
+            ctx_kwargs["locale"] = locale
+        if timezone_id:
+            ctx_kwargs["timezone_id"] = timezone_id
+        # Seed with prior state if any, so re-runs don't start from zero.
+        if out.exists():
+            ctx_kwargs["storage_state"] = str(out)
+        context = await browser.new_context(**ctx_kwargs)
+        page = await context.new_page()
+        try:
+            await page.goto(start_url, wait_until="domcontentloaded", timeout=60000)
+        except Exception as err:
+            print(f"[auth] Initial navigation warning: {err}", flush=True)
+
+        if resume_event is None:
+            print("", flush=True)
+            print("=" * 70, flush=True)
+            print("  Complete login / SSO in the browser window that just opened.", flush=True)
+            print("  When you're back at the prototype URL and signed in,", flush=True)
+            print("  return to THIS terminal and press Enter to hand off to the", flush=True)
+            print("  headless agent.", flush=True)
+            print("=" * 70, flush=True)
+            print("", flush=True)
+
+        await _wait_for_auth_handoff(resume_event, progress_callback)
+
+        await context.storage_state(path=str(out))
+        await context.close()
+        await browser.close()
+
+        print(f"[auth] Saved authenticated session to {out}", flush=True)
 
 
 async def run_experiment(
     config: dict[str, Any],
     progress_callback: ProgressCallback | None = None,
     should_cancel: CancelCallback | None = None,
+    auth_resume_event: threading.Event | None = None,
 ) -> list[dict[str, Any]]:
-    output_file = Path(config["output_file"])
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-
     fieldnames = [
         "experiment_name",
         "start_url",
@@ -1080,9 +1284,19 @@ async def run_experiment(
         "timestamp",
     ]
 
-    with output_file.open("w", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
+    # The CSV file is now opt-in. CLI / notebook callers pass a real
+    # output_file path and get the on-disk artifact they expect; the API
+    # passes "" so no auto-save happens (the UI builds the CSV on demand).
+    output_file_value = str(config.get("output_file") or "").strip()
+    output_file: Path | None = None
+    if output_file_value:
+        output_file = Path(output_file_value)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        with output_file.open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+
+    rows_in_memory: list[dict[str, Any]] = []
 
     capture_screenshots = bool(config.get("capture_screenshots", False))
     run_dir: Path | None = None
@@ -1112,8 +1326,54 @@ async def run_experiment(
 
     sessions: list[tuple[str, list[dict[str, Any]]]] = []
 
+    browser_conf = config.get("browser", {}) or {}
+
+    # Optional: pause for human SSO/login before the headless agent takes
+    # over. Does its work in a separate Playwright instance so it can fully
+    # tear down before the main run starts.
+    interactive_auth = bool(browser_conf.get("interactive_auth", False))
+    storage_state_path_for_auth = browser_conf.get("storage_state_path")
+    if interactive_auth and storage_state_path_for_auth:
+        await _interactive_auth_warmup(
+            start_url=config["start_url"],
+            storage_state_path=str(storage_state_path_for_auth),
+            user_agent=browser_conf.get("user_agent"),
+            viewport=browser_conf.get("viewport"),
+            locale=browser_conf.get("locale"),
+            timezone_id=browser_conf.get("timezone_id"),
+            resume_event=auth_resume_event,
+            progress_callback=progress_callback,
+        )
+    elif interactive_auth and not storage_state_path_for_auth:
+        print(
+            "[auth] interactive_auth is True but browser.storage_state_path "
+            "is empty — skipping. Set storage_state_path so the saved "
+            "cookies have somewhere to live.",
+            flush=True,
+        )
+
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=True)
+        browser = await playwright.chromium.launch(
+            headless=bool(browser_conf.get("headless", False)),
+        )
+        context_kwargs: dict[str, Any] = {}
+        if browser_conf.get("user_agent"):
+            context_kwargs["user_agent"] = browser_conf["user_agent"]
+        if browser_conf.get("viewport"):
+            context_kwargs["viewport"] = browser_conf["viewport"]
+        if browser_conf.get("locale"):
+            context_kwargs["locale"] = browser_conf["locale"]
+        if browser_conf.get("timezone_id"):
+            context_kwargs["timezone_id"] = browser_conf["timezone_id"]
+        if browser_conf.get("color_scheme"):
+            context_kwargs["color_scheme"] = browser_conf["color_scheme"]
+        storage_state_path = browser_conf.get("storage_state_path")
+        if storage_state_path and Path(storage_state_path).exists():
+            context_kwargs["storage_state"] = str(storage_state_path)
+            print(f"[browser] Using pre-warmed session from {storage_state_path}", flush=True)
+        context = await browser.new_context(**context_kwargs)
+        if browser_conf.get("use_stealth", True):
+            await context.add_init_script(STEALTH_INIT_SCRIPT)
         emit_progress(
             phase="browser_ready",
             completed_sessions=0,
@@ -1140,7 +1400,7 @@ async def run_experiment(
                     )
                     break
                 session_counter += 1
-                page = await browser.new_page()
+                page = await context.new_page()
                 emit_progress(
                     phase="session_started",
                     completed_sessions=session_counter - 1,
@@ -1205,11 +1465,14 @@ async def run_experiment(
                         "cancelled": False,
                     }
 
-                # Persist CSV row (without the artifacts payload — that lives in JSON only).
+                # Capture the row without the artifacts payload (which lives
+                # in JSON only) and optionally persist to disk.
                 csv_row = {key: result[key] for key in fieldnames}
-                with output_file.open("a", newline="") as handle:
-                    writer = csv.DictWriter(handle, fieldnames=fieldnames)
-                    writer.writerow(csv_row)
+                rows_in_memory.append(csv_row)
+                if output_file is not None:
+                    with output_file.open("a", newline="") as handle:
+                        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+                        writer.writerow(csv_row)
 
                 sessions.append((persona["name"], result.get("artifacts", []) or []))
                 emit_progress(
@@ -1257,8 +1520,17 @@ async def run_experiment(
         ),
     )
 
-    with output_file.open() as handle:
-        rows = list(csv.DictReader(handle))
+    if output_file is not None:
+        with output_file.open() as handle:
+            rows = list(csv.DictReader(handle))
+    else:
+        # No CSV was written — every value is already a string-friendly
+        # primitive in csv_row; normalize booleans the way csv.DictReader
+        # would so downstream consumers (e.g. summarize_rows) keep working.
+        rows = [
+            {key: ("True" if value is True else "False" if value is False else str(value)) for key, value in row.items()}
+            for row in rows_in_memory
+        ]
 
     # Tack the per-session artifact bundles onto the returned rows. The CSV
     # schema is unchanged; consumers that don't care can ignore the extra key.

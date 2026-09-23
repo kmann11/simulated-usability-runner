@@ -3,6 +3,7 @@ import type {
   ExperimentConfig,
   HealthResponse,
   LeverDefinition,
+  LeverGroup,
   Lob,
   RunJobStatus,
   RunResponse,
@@ -44,6 +45,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export interface RunOptions {
   include_heuristics?: boolean;
+  include_tlx?: boolean;
   capture_screenshots?: boolean;
 }
 
@@ -61,6 +63,7 @@ export const api = {
       body: JSON.stringify({
         config,
         include_heuristics: options.include_heuristics ?? false,
+        include_tlx: options.include_tlx ?? true,
         capture_screenshots: options.capture_screenshots ?? false,
       }),
     }),
@@ -70,12 +73,17 @@ export const api = {
       body: JSON.stringify({
         config,
         include_heuristics: options.include_heuristics ?? false,
+        include_tlx: options.include_tlx ?? true,
         capture_screenshots: options.capture_screenshots ?? false,
       }),
     }),
   getRunStatus: (jobId: string) => request<RunJobStatus>(`/runs/${jobId}`),
   cancelRun: (jobId: string) =>
     request<RunJobStatus>(`/runs/${jobId}/cancel`, {
+      method: "POST",
+    }),
+  completeRunAuth: (jobId: string) =>
+    request<RunJobStatus>(`/runs/${jobId}/auth-complete`, {
       method: "POST",
     }),
   stress: (output_prefix: string, runs_per_persona: number) =>
@@ -89,6 +97,7 @@ export const api = {
     return request<SegmentPreset[]>(`/personas/segments${qs}`);
   },
   getLevers: () => request<LeverDefinition[]>("/personas/levers"),
+  getLeverGroups: () => request<LeverGroup[]>("/personas/lever-groups"),
   artifactUrl: (path: string) => {
     const cleaned = path.replace(/^\/+/, "");
     return `${API_BASE}/artifacts/${cleaned}`;

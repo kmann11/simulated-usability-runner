@@ -2,7 +2,6 @@ import { useMemo, useState, type ReactNode } from "react";
 import { useCatalog } from "../catalog";
 import type { LeverDefinition, Lob, Persona, SegmentPreset } from "../types";
 import {
-  LEVER_GROUPS,
   deriveBehaviorFloats,
   describeBehavior,
   getSegmentPreset,
@@ -28,7 +27,7 @@ const CUSTOM_DEFAULT_LEVERS: Record<string, string> = {
   device_context: "desktop",
   budget_sensitivity: "medium",
   abandonment_threshold: "medium",
-  prior_familiarity: "medium",
+  prior_product_familiarity: "medium",
 };
 
 function applyDerivedFloats(
@@ -44,11 +43,17 @@ function defaultBehaviorPersona() {
 }
 
 export function PersonaList({ personas, onChange, lob }: PersonaListProps) {
-  const { segments, levers: leverDefinitions, lobs } = useCatalog();
+  const { segments, levers: leverDefinitions, leverGroups, lobs } = useCatalog();
 
-  const leverIndex = useMemo(() => {
-    const out: Record<string, LeverDefinition> = {};
-    for (const lever of leverDefinitions) out[lever.id] = lever;
+  // Bucket levers by their `group` id so each group card renders only its own
+  // controls. Any lever without a group id falls into the last bucket so we
+  // never silently drop one.
+  const leversByGroup = useMemo(() => {
+    const out: Record<string, LeverDefinition[]> = {};
+    for (const lever of leverDefinitions) {
+      const key = lever.group || "context";
+      (out[key] ||= []).push(lever);
+    }
     return out;
   }, [leverDefinitions]);
 
@@ -210,12 +215,12 @@ export function PersonaList({ personas, onChange, lob }: PersonaListProps) {
         <option value={CUSTOM_SEGMENT}>Custom (start from neutral)</option>
         {brandSegments.map((seg) => (
           <option key={seg.id} value={seg.id}>
-            {seg.name} — {seg.brand}
-            {seg.is_primary ? " (primary)" : ""}
+            {seg.name}, {seg.brand}
+            {seg.is_primary ? " (recommended)" : ""}
           </option>
         ))}
         {crossBrandSegments.length > 0 && (
-          <optgroup label="Cross-brand">
+          <optgroup label="All brands">
             {crossBrandSegments.map((seg) => (
               <option key={seg.id} value={seg.id}>
                 {seg.name}
@@ -224,9 +229,9 @@ export function PersonaList({ personas, onChange, lob }: PersonaListProps) {
           </optgroup>
         )}
         {!inFilter && selectedPreset && (
-          <optgroup label="From other lines of business">
+          <optgroup label="From other product areas">
             <option value={selectedPreset.id}>
-              {selectedPreset.name} — {selectedPreset.brand}
+              {selectedPreset.name}, {selectedPreset.brand}
             </option>
           </optgroup>
         )}
@@ -240,7 +245,7 @@ export function PersonaList({ personas, onChange, lob }: PersonaListProps) {
     <div className="persona-list">
       {noSegmentsForLob && (
         <p className="persona-lob-empty">
-          We don't have research-backed segments for{" "}
+          We don&apos;t have ready-made traveler types for{" "}
           <strong>{activeLobName ?? activeLob}</strong> yet. You can still add a custom tester
           below.
         </p>
@@ -285,8 +290,8 @@ export function PersonaList({ personas, onChange, lob }: PersonaListProps) {
                 </label>
                 {selectedOutOfLob && (
                   <p className="persona-out-of-lob">
-                    This tester is from <strong>{outOfLobName}</strong>. Change the line of
-                    business above to see more testers like this.
+                    This tester is from <strong>{outOfLobName}</strong>. Change the product area
+                    above to see more testers like this.
                   </p>
                 )}
                 {preset ? (
@@ -299,7 +304,8 @@ export function PersonaList({ personas, onChange, lob }: PersonaListProps) {
                   </div>
                 ) : (
                   <p className="persona-segment-summary">
-                    A neutral baseline tester. Open "Customize levers" to shape their behavior.
+                    A neutral baseline tester. Open &ldquo;Fine-tune behavior&rdquo; to shape how
+                    they act.
                   </p>
                 )}
               </div>
@@ -327,7 +333,7 @@ export function PersonaList({ personas, onChange, lob }: PersonaListProps) {
                 onClick={() => toggleExpanded(index)}
               >
                 <span className="caret">{isExpanded ? "▼" : "▶"}</span>{" "}
-                {isExpanded ? "Hide levers" : "Customize levers"}
+                {isExpanded ? "Hide behavior settings" : "Fine-tune behavior"}
                 <span className="muted"> ({leverDefinitions.length})</span>
                 {modified && <span className="badge badge-warn">Modified</span>}
               </button>
@@ -357,30 +363,32 @@ export function PersonaList({ personas, onChange, lob }: PersonaListProps) {
                     )}
                   </div>
 
-                  {LEVER_GROUPS.map((group) => (
-                    <div key={group.id} className="lever-group">
-                      <div className="lever-group-head">{group.name}</div>
-                      <div className="lever-grid">
-                        {group.lever_ids.map((leverId) => {
-                          const lever = leverIndex[leverId];
-                          if (!lever) return null;
-                          const presetValue = preset ? preset.levers[leverId] : undefined;
-                          const currentValue = currentLevers[leverId] ?? "";
-                          const overridden =
-                            !!presetValue && presetValue !== currentValue;
-                          return (
-                            <LeverRow
-                              key={lever.id}
-                              lever={lever}
-                              value={currentValue}
-                              overridden={overridden}
-                              onChange={(value) => handleLeverChange(index, lever.id, value)}
-                            />
-                          );
-                        })}
+                  {leverGroups.map((group) => {
+                    const members = leversByGroup[group.id] ?? [];
+                    if (members.length === 0) return null;
+                    return (
+                      <div key={group.id} className="lever-group">
+                        <div className="lever-group-head">{group.name}</div>
+                        <div className="lever-grid">
+                          {members.map((lever) => {
+                            const presetValue = preset ? preset.levers[lever.id] : undefined;
+                            const currentValue = currentLevers[lever.id] ?? "";
+                            const overridden =
+                              !!presetValue && presetValue !== currentValue;
+                            return (
+                              <LeverRow
+                                key={lever.id}
+                                lever={lever}
+                                value={currentValue}
+                                overridden={overridden}
+                                onChange={(value) => handleLeverChange(index, lever.id, value)}
+                              />
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -413,7 +421,7 @@ function LeverRow({ lever, value, overridden, onChange }: LeverRowProps) {
         <span className="lever-summary">{lever.summary}</span>
       </div>
       <select value={value} onChange={(event) => onChange(event.target.value)}>
-        {!value && <option value="">— pick a level —</option>}
+        {!value && <option value="">Pick a level</option>}
         {lever.options.map((option) => (
           <option key={option.value} value={option.value}>
             {option.label}
@@ -427,7 +435,7 @@ function LeverRow({ lever, value, overridden, onChange }: LeverRowProps) {
 const CONFIDENCE_COPY: Record<string, string> = {
   high: "High-confidence research",
   medium: "Medium-confidence research",
-  low: "Low-confidence — review before using",
+  low: "Low confidence. Review before using",
 };
 
 function SegmentBadges({ preset }: { preset: SegmentPreset }) {
@@ -445,7 +453,7 @@ function SegmentBadges({ preset }: { preset: SegmentPreset }) {
       <span
         key="cross"
         className="seg-badge seg-badge--cross"
-        title="Cross-brand segment — appears under every consumer LOB"
+        title="Cross-brand segment. Appears under every consumer LOB"
       >
         Cross-brand
       </span>,
