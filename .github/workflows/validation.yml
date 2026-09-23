@@ -10,6 +10,9 @@ jobs:
     name: Validate runner
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # CI has no display; force headless Chromium for Playwright smoke/stress.
+      USABILITY_HEADLESS: "true"
 
     steps:
       - name: Check out repo
@@ -45,6 +48,8 @@ jobs:
         run: python -c "from playwright.sync_api import sync_playwright; p = sync_playwright().start(); b = p.chromium.launch(headless=True); page = b.new_page(); page.goto('data:text/html,<h1>ok</h1>'); print(page.locator('h1').inner_text()); b.close(); p.stop()"
 
       - name: Run local fixture smoke benchmark
+        env:
+          USABILITY_HEADLESS: "true"
         run: python scripts/generic_usability_stress.py --output-prefix validation_smoke --runs-per-persona 1
 
       - name: Upload validation CSVs

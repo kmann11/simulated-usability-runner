@@ -8,7 +8,7 @@ import {
   PROTOTYPE_SOURCE_LABEL,
 } from "../prototypeSource";
 import { buildRunPlanCopy, formatLinkLabel, isValidPrototypeUrl } from "../linkPreview";
-import { signInCopyForUrl } from "../prototypeAuth";
+import { LOCAL_AUTH_ONLY_CALLOUT, signInCopyForUrl } from "../prototypeAuth";
 import { deriveBehaviorFloats } from "../segments";
 import { isPlaceholderStudyName, suggestStudyName } from "../studyNaming";
 import type { ExperimentConfig, Lob } from "../types";
@@ -37,6 +37,8 @@ interface ConfigFormProps {
   options: RunOptionsState;
   onOptionsChange: (next: RunOptionsState) => void;
   disabled?: boolean;
+  /** From /healthz; false on cloud/headless backends. */
+  interactiveAuthAvailable?: boolean;
 }
 
 export function ConfigForm({
@@ -45,6 +47,7 @@ export function ConfigForm({
   options,
   onOptionsChange,
   disabled,
+  interactiveAuthAvailable = true,
 }: ConfigFormProps) {
   const { lobs, segments } = useCatalog();
   const studyNameTouchedRef = useRef(false);
@@ -53,12 +56,21 @@ export function ConfigForm({
     [config.start_url],
   );
   const signInCopy = useMemo(() => signInCopyForUrl(config.start_url), [config.start_url]);
+  const skipSignIn = options.sign_in_before_run === false || options.figma_sign_in === false;
 
   const update = <K extends keyof ExperimentConfig>(key: K, value: ExperimentConfig[K]) => {
     onChange({ ...config, [key]: value });
   };
   const updateOption = <K extends keyof RunOptionsState>(key: K, value: RunOptionsState[K]) => {
     onOptionsChange({ ...options, [key]: value });
+  };
+
+  const setSkipSignIn = (skip: boolean) => {
+    onOptionsChange({
+      ...options,
+      sign_in_before_run: !skip,
+      figma_sign_in: !skip,
+    });
   };
 
   const maybeSuggestStudyName = () => {
@@ -129,7 +141,12 @@ export function ConfigForm({
                 const nextUrl = event.target.value;
                 update("start_url", nextUrl);
                 if (signInCopyForUrl(nextUrl) && options.sign_in_before_run === undefined) {
-                  onOptionsChange({ ...options, sign_in_before_run: true, figma_sign_in: true });
+                  const preferSignIn = interactiveAuthAvailable;
+                  onOptionsChange({
+                    ...options,
+                    sign_in_before_run: preferSignIn,
+                    figma_sign_in: preferSignIn,
+                  });
                 }
               }}
               onBlur={maybeSuggestStudyName}
@@ -150,9 +167,30 @@ export function ConfigForm({
 
           {signInCopy && (
             <div className="figma-auth-callout" role="note">
-              <p>
-                <strong>{signInCopy.calloutTitle}</strong>. {signInCopy.calloutBody}
-              </p>
+              {!interactiveAuthAvailable ? (
+                <p>
+                  <strong>Local sign-in unavailable.</strong> {LOCAL_AUTH_ONLY_CALLOUT}
+                </p>
+              ) : (
+                <p>
+                  <strong>{signInCopy.calloutTitle}</strong>. {signInCopy.calloutBody}
+                </p>
+              )}
+              <label className="toggle-row skip-sign-in-toggle">
+                <input
+                  type="checkbox"
+                  checked={skipSignIn || !interactiveAuthAvailable}
+                  disabled={!interactiveAuthAvailable}
+                  onChange={(event) => setSkipSignIn(event.target.checked)}
+                />
+                <span className="toggle-text">
+                  <strong>Skip sign-in (public link)</strong>
+                  <small>
+                    Use when the Figma/GitHub page is already public and does not need a login
+                    window.
+                  </small>
+                </span>
+              </label>
             </div>
           )}
         </div>

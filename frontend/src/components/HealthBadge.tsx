@@ -1,19 +1,28 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
+import type { HealthResponse } from "../types";
 
 type Status = "checking" | "ok" | "down";
 
-export function HealthBadge() {
+interface HealthBadgeProps {
+  onHealth?: (health: HealthResponse | null) => void;
+}
+
+export function HealthBadge({ onHealth }: HealthBadgeProps) {
   const [status, setStatus] = useState<Status>("checking");
 
   useEffect(() => {
     let cancelled = false;
     const ping = async () => {
       try {
-        await api.health();
-        if (!cancelled) setStatus("ok");
+        const health = await api.health();
+        if (cancelled) return;
+        setStatus("ok");
+        onHealth?.(health);
       } catch {
-        if (!cancelled) setStatus("down");
+        if (cancelled) return;
+        setStatus("down");
+        onHealth?.(null);
       }
     };
     ping();
@@ -22,7 +31,7 @@ export function HealthBadge() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, []);
+  }, [onHealth]);
 
   const label =
     status === "ok" ? "Connected" : status === "down" ? "Can't reach the runner" : "Connecting…";

@@ -1202,6 +1202,30 @@ async def _interactive_auth_warmup(
     out = Path(storage_state_path)
     out.parent.mkdir(parents=True, exist_ok=True)
 
+    headless_env = os.getenv("USABILITY_HEADLESS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    no_display = sys.platform.startswith("linux") and not os.getenv("DISPLAY", "").strip()
+    if headless_env or no_display:
+        warn = (
+            "[auth] interactive_auth requested but this host is headless / has no display — "
+            "skipping sign-in warmup. Use a public link, a pre-warmed storage_state, "
+            "or run the API locally with a display."
+        )
+        print(warn, flush=True)
+        if progress_callback:
+            progress_callback(
+                phase="starting",
+                message=(
+                    "Skipping interactive sign-in (headless/cloud backend). "
+                    "Continuing with whatever session state is already on disk, if any."
+                ),
+            )
+        return
+
     if resume_event is None and not sys.stdin.isatty():
         print(
             "[auth] interactive_auth enabled but no TTY attached — skipping. "

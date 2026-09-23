@@ -750,6 +750,18 @@ def _env_truthy(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def interactive_auth_available() -> bool:
+    """True when a headed sign-in window can realistically open.
+
+    Cloud / Docker set USABILITY_HEADLESS=true. Linux CI also lacks DISPLAY.
+    """
+    if _env_truthy("USABILITY_HEADLESS"):
+        return False
+    if sys.platform.startswith("linux") and not os.getenv("DISPLAY", "").strip():
+        return False
+    return True
+
+
 def build_config(override: dict[str, Any]) -> dict[str, Any]:
     config = copy.deepcopy(DEFAULT_GENERIC_CONFIG)
     recursive_merge(config, override)
@@ -757,9 +769,12 @@ def build_config(override: dict[str, Any]) -> dict[str, Any]:
     # behavior floats. Fill the legacy 4-float model in so the runner is happy.
     config["personas"] = [normalize_persona(persona) for persona in config.get("personas", [])]
     # Cloud / Docker: USABILITY_HEADLESS forces headless Chromium (no display).
+    browser = config.setdefault("browser", {})
     if _env_truthy("USABILITY_HEADLESS"):
-        browser = config.setdefault("browser", {})
         browser["headless"] = True
+    # Interactive SSO popups need a real display; auto-disable and warn later.
+    if browser.get("interactive_auth") and not interactive_auth_available():
+        browser["interactive_auth"] = False
     return config
 
 
@@ -790,16 +805,19 @@ def validate_config(config: dict[str, Any]) -> tuple[list[str], list[str]]:
             warnings.append("Start URL does not use http, https, or file.")
         if _url_needs_interactive_auth(config["start_url"]):
             browser_conf = config.get("browser") or {}
-            if not browser_conf.get("interactive_auth"):
+            if not interactive_auth_available():
+                warnings.append(
+                    "Interactive login (Figma/GitHub SSO) is not available on this "
+                    "headless/cloud backend. Use a public link, a pre-warmed "
+                    "storage_state from a local machine, or run the API locally "
+                    "for authenticated flows. Enable “Skip sign-in (public link)” "
+                    "in the UI if the page is already public."
+                )
+            elif not browser_conf.get("interactive_auth"):
                 warnings.append(
                     "This link usually requires you to sign in first. Run from the web app so we "
-                    "can open a browser window for one-time login."
-                )
-            elif _env_truthy("USABILITY_HEADLESS"):
-                warnings.append(
-                    "Interactive login (Figma/GitHub SSO) does not work well on hosted "
-                    "headless cloud. Use a public link, a pre-warmed storage_state from a "
-                    "local machine, or run the API locally for authenticated flows."
+                    "can open a browser window for one-time login, or enable “Skip sign-in” "
+                    "if the link is public."
                 )
     if not config["tasks"]:
         errors.append("Add at least one task.")
@@ -866,7 +884,13 @@ def root() -> dict[str, Any]:
 
 @app.get("/healthz")
 def healthz() -> dict[str, Any]:
-    return {"status": "ok", "timestamp": dt.datetime.now().isoformat()}
+    auth_ok = interactive_auth_available()
+    return {
+        "status": "ok",
+        "timestamp": dt.datetime.now().isoformat(),
+        "interactive_auth_available": auth_ok,
+        "headless": _env_truthy("USABILITY_HEADLESS") or not auth_ok,
+    }
 
 
 @app.get("/personas/levers")

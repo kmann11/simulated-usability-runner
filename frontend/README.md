@@ -9,9 +9,10 @@ It is intentionally internal-tool quality: a single page with two tabs ("Run exp
 - Edits an experiment config in a form (mirrors `configs/generic_usability_experiment.example.json`)
 - Imports / exports the config as JSON
 - Calls `POST /validate` and renders errors + warnings + a config preview
-- Calls `POST /run` and renders the summary stats returned by the backend
+- Starts runs with `POST /runs`, polls `GET /runs/{job_id}`, and can cancel or complete interactive auth
+- Falls back documentation still mentions legacy `POST /run` (sync) on the backend
 - Calls `POST /stress` and renders the per-fixture summary table
-- Polls `GET /healthz` every 15 seconds and shows a status badge
+- Polls `GET /healthz` every 15 seconds and shows a status badge (including whether interactive auth is available)
 
 ## Prerequisites
 
@@ -100,6 +101,6 @@ Alternatively, for local-only API use, run the UI with Vite (`npm run dev`) agai
 
 ## Notes
 
-- `POST /run` is synchronous on the backend; the UI shows a "Running…" banner until the response returns. Long runs may take minutes — that is expected.
+- Primary path is async: `POST /runs` then poll `GET /runs/{job_id}`. Legacy `POST /run` remains on the backend for sync callers. Long runs may take minutes — that is expected.
 - `output_file` paths are resolved relative to the repo root by the backend; e.g. `output/foo.csv` lands in `<repo>/output/foo.csv`.
 - The stress benchmark runs against the bundled local HTML fixtures, so it does not touch any live URL and is safe to run anytime to sanity-check the runner.

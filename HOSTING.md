@@ -5,6 +5,24 @@ GitHub Pages serves the **UI only**
 Playwright and FastAPI must run on a separate host. This repo ships a `Dockerfile`
 and a Render Blueprint (`render.yaml`) for that API.
 
+## Status checklist
+
+| Step | What | Done when |
+| --- | --- | --- |
+| 1 | Deploy API on Render (Blueprint below) | `GET https://<service>.onrender.com/healthz` returns JSON with `"status":"ok"` |
+| 2 | Set GitHub Actions variable `VITE_API_BASE` | Variable equals that HTTPS origin, **no trailing slash** |
+| 3 | Redeploy Pages | UI Network tab shows requests to your Render host |
+
+**Do not invent an API URL.** If you have not deployed Render yet, leave `VITE_API_BASE` unset. The hosted UI will keep calling `/api/...` on github.io until step 2 is done.
+
+After Render is live, from a machine with `gh` authenticated:
+
+```bash
+gh variable set VITE_API_BASE --body "https://<your-real-service>.onrender.com" -R kmann11/simulated-usability-runner
+```
+
+Then re-run **Actions → Deploy frontend to GitHub Pages**.
+
 ## 1. Deploy the API on Render (Blueprint)
 
 1. Open [https://dashboard.render.com](https://dashboard.render.com) and sign in.
@@ -17,13 +35,17 @@ and a Render Blueprint (`render.yaml`) for that API.
    - **`CORS_ORIGINS`** (optional): comma-separated extra origins if you need them.
    - `USABILITY_HEADLESS` is already `true` in the Blueprint — leave it.
 6. Wait for the first deploy. Open the service URL (HTTPS, typically `https://<name>.onrender.com`).
-7. Confirm `GET https://<your-service>.onrender.com/healthz` returns `{"status":"ok",...}`.
+7. Confirm `GET https://<your-service>.onrender.com/healthz` returns something like:
+
+   ```json
+   {"status":"ok","timestamp":"...","interactive_auth_available":false,"headless":true}
+   ```
 
 **Notes**
 
 - Free web services sleep after idle time; the first request after sleep can take ~30–60s.
 - Chromium is memory-heavy. If runs crash or the service restarts under load, upgrade the plan to **Starter** in the Render dashboard.
-- Figma / GitHub interactive login popups do **not** work well on cloud (no headed browser / TTY). Use public links, pre-warmed `storage_state` from a local machine, or run the API locally for authenticated flows.
+- Figma / GitHub interactive login popups do **not** work on cloud (`USABILITY_HEADLESS=true`, no display). Use a public link, pre-warmed `storage_state` from a local machine, or run the API locally for authenticated flows. The UI shows a “Sign-in windows only work with a local backend” callout when `/healthz` reports interactive auth unavailable.
 
 ### Manual Docker service (no Blueprint)
 
@@ -36,11 +58,17 @@ and a Render Blueprint (`render.yaml`) for that API.
 ## 2. Point GitHub Pages UI at the API
 
 1. In GitHub: repo **Settings** → **Secrets and variables** → **Actions** → **Variables**.
-2. Create or update **`VITE_API_BASE`** to the Render HTTPS origin **with no trailing slash**, e.g. `https://simulated-usability-runner.onrender.com`.
-3. Re-deploy Pages:
+2. Create or update **`VITE_API_BASE`** to the Render HTTPS origin **with no trailing slash**, e.g. `https://your-service.onrender.com` (use the URL from your Render dashboard — not a guessed name).
+3. Or via CLI (after Render is live):
+
+   ```bash
+   gh variable set VITE_API_BASE --body "https://your-service.onrender.com" -R kmann11/simulated-usability-runner
+   ```
+
+4. Re-deploy Pages:
    - **Actions** → **Deploy frontend to GitHub Pages** → **Run workflow**, or
    - Push a change under `frontend/` / the workflow file.
-4. Hard-refresh the Pages UI. Health / runs should hit your Render URL (check the browser Network tab).
+5. Hard-refresh the Pages UI. Health / runs should hit your Render URL (check the browser Network tab).
 
 Until `VITE_API_BASE` is set, the hosted UI calls `/api/...` on github.io, which cannot run the backend.
 

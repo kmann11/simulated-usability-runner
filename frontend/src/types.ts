@@ -337,6 +337,9 @@ export interface StressResponse {
 export interface HealthResponse {
   status: string;
   timestamp: string;
+  /** False on cloud/headless backends where headed Chrome cannot open. */
+  interactive_auth_available?: boolean;
+  headless?: boolean;
 }
 
 export interface ApiError {

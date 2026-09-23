@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, describeError } from "./api/client";
 import { ConfigForm, type RunOptionsState } from "./components/ConfigForm";
 import { EvidenceGallery } from "./components/EvidenceGallery";
@@ -16,7 +16,7 @@ import { clearShareFromLocation, readShareFromLocation, type SharedStudySetup } 
 import { configForRun, signInCopyForUrl } from "./prototypeAuth";
 import { isValidPrototypeUrl } from "./linkPreview";
 import { EMPTY_STUDY_METADATA, type SavedStudy, type StudyMetadata } from "./studyLibrary";
-import type { ExperimentConfig, RunJobStatus, RunResponse, ValidateResponse } from "./types";
+import type { ExperimentConfig, HealthResponse, RunJobStatus, RunResponse, ValidateResponse } from "./types";
 
 type ResultTab = "run" | "heuristics" | "tlx" | "evidence";
 type NoticeState = {
@@ -45,12 +45,28 @@ export default function App() {
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [runJob, setRunJob] = useState<RunJobStatus | null>(null);
   const [stoppingRun, setStoppingRun] = useState(false);
+  const [interactiveAuthAvailable, setInteractiveAuthAvailable] = useState(true);
   const loadingRef = useRef<HTMLDivElement | null>(null);
   const resultsRef = useRef<HTMLDivElement | null>(null);
 
   const busy = checking || running;
   const review = result?.heuristic_review ?? null;
   const tlxReview = result?.tlx_review ?? null;
+
+  const handleHealth = useCallback((health: HealthResponse | null) => {
+    if (!health) return;
+    setInteractiveAuthAvailable(health.interactive_auth_available !== false);
+  }, []);
+
+  useEffect(() => {
+    if (interactiveAuthAvailable) return;
+    if (options.sign_in_before_run === false) return;
+    setOptions((current) => ({
+      ...current,
+      sign_in_before_run: false,
+      figma_sign_in: false,
+    }));
+  }, [interactiveAuthAvailable, options.sign_in_before_run]);
 
   const applySharedSetup = (setup: SharedStudySetup, sourceLabel: string) => {
     setConfig(setup.config);
@@ -223,7 +239,7 @@ export default function App() {
     setNotice(null);
     setCheck(null);
     try {
-      setCheck(await api.validate(configForRun(config, options)));
+      setCheck(await api.validate(configForRun(config, options, interactiveAuthAvailable)));
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -269,7 +285,10 @@ export default function App() {
     setResultTab("run");
     setRunStartedAt(Date.now());
     try {
-      const job = await api.startRun(configForRun(config, options), options);
+      const job = await api.startRun(
+        configForRun(config, options, interactiveAuthAvailable),
+        options,
+      );
       setRunJob(job);
 
       if (job.status === "completed") {
@@ -351,7 +370,7 @@ export default function App() {
             </p>
           </details>
         </div>
-        <HealthBadge />
+        <HealthBadge onHealth={handleHealth} />
       </header>
 
       <ConfigForm
@@ -360,6 +379,7 @@ export default function App() {
         options={options}
         onOptionsChange={setOptions}
         disabled={busy}
+        interactiveAuthAvailable={interactiveAuthAvailable}
       />
 
       <StudyDesignQa config={config} options={options} />
@@ -399,6 +419,7 @@ export default function App() {
             onStop={handleStopRun}
             onAuthComplete={handleAuthComplete}
             stopDisabled={stoppingRun || !runJob?.job_id}
+            interactiveAuthAvailable={interactiveAuthAvailable}
           />
         </div>
       )}

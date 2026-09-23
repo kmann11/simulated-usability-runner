@@ -399,6 +399,9 @@ async def run_stress_benchmark(output_prefix: str, runs_per_persona: int | None)
                     "random_seed": 7,
                 }
             )
+            # Stress runs local HTML fixtures; always headless (CI / Docker / no display).
+            browser = config.setdefault("browser", {})
+            browser["headless"] = True
             rows = await run_experiment(config)
             combined_rows.extend(rows)
 

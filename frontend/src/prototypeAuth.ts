@@ -10,14 +10,22 @@ export const SESSION_PATHS: Record<AuthProvider, string> = {
   github: "output/sessions/github.session.json",
 };
 
+export const LOCAL_AUTH_ONLY_CALLOUT =
+  "Sign-in windows only work with a local backend. On cloud/headless hosts, use a public link or Skip sign-in.";
+
 export function getAuthProvider(url: string): AuthProvider | null {
   const source = guessPrototypeSource(url);
   if (source === "figma" || source === "github") return source;
   return null;
 }
 
-export function needsInteractiveSignIn(url: string, options: RunOptionsState): boolean {
+export function needsInteractiveSignIn(
+  url: string,
+  options: RunOptionsState,
+  interactiveAuthAvailable = true,
+): boolean {
   if (!getAuthProvider(url)) return false;
+  if (!interactiveAuthAvailable) return false;
   if (options.sign_in_before_run === false) return false;
   // Legacy option kept for shared study links.
   if (options.figma_sign_in === false) return false;
@@ -27,9 +35,13 @@ export function needsInteractiveSignIn(url: string, options: RunOptionsState): b
 export function configForRun(
   config: ExperimentConfig,
   options: RunOptionsState,
+  interactiveAuthAvailable = true,
 ): ExperimentConfig {
   const provider = getAuthProvider(config.start_url);
-  if (!provider || !needsInteractiveSignIn(config.start_url, options)) {
+  if (
+    !provider ||
+    !needsInteractiveSignIn(config.start_url, options, interactiveAuthAvailable)
+  ) {
     return config;
   }
 
@@ -104,6 +116,13 @@ export function isGitHubPrototypeUrl(url: string): boolean {
   return guessPrototypeSource(url) === "github";
 }
 
-export function shouldUseFigmaSignIn(url: string, options: RunOptionsState): boolean {
-  return getAuthProvider(url) === "figma" && needsInteractiveSignIn(url, options);
+export function shouldUseFigmaSignIn(
+  url: string,
+  options: RunOptionsState,
+  interactiveAuthAvailable = true,
+): boolean {
+  return (
+    getAuthProvider(url) === "figma" &&
+    needsInteractiveSignIn(url, options, interactiveAuthAvailable)
+  );
 }

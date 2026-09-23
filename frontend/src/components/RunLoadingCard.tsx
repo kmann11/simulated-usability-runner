@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatLinkLabel } from "../linkPreview";
-import { signInCopyForUrl } from "../prototypeAuth";
+import { LOCAL_AUTH_ONLY_CALLOUT, signInCopyForUrl } from "../prototypeAuth";
 import type { ExperimentConfig, RunJobStatus } from "../types";
 import type { RunOptionsState } from "./ConfigForm";
 
@@ -12,6 +12,7 @@ interface RunLoadingCardProps {
   onStop?: () => void;
   onAuthComplete?: () => void;
   stopDisabled?: boolean;
+  interactiveAuthAvailable?: boolean;
 }
 
 function clamp(value: number, lower: number, upper: number): number {
@@ -54,6 +55,7 @@ export function RunLoadingCard({
   onStop,
   onAuthComplete,
   stopDisabled = false,
+  interactiveAuthAvailable = true,
 }: RunLoadingCardProps) {
   const [now, setNow] = useState(() => Date.now());
   const signInCopy = useMemo(() => signInCopyForUrl(config.start_url), [config.start_url]);
@@ -169,7 +171,7 @@ export function RunLoadingCard({
 
       <p className="run-loading-phase">{phaseText}</p>
 
-      {waitingForLogin && onAuthComplete && signInCopy && (
+      {waitingForLogin && onAuthComplete && signInCopy && interactiveAuthAvailable && (
         <div
           className="figma-login-panel"
           role="region"
@@ -185,6 +187,12 @@ export function RunLoadingCard({
             {signInCopy.continueButton}
           </button>
         </div>
+      )}
+
+      {signInCopy && !interactiveAuthAvailable && (
+        <p className="muted small run-loading-auth-note" role="note">
+          {LOCAL_AUTH_ONLY_CALLOUT}
+        </p>
       )}
 
       <p className="muted small run-loading-note">
