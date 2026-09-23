@@ -218,6 +218,14 @@ Columns:
 
 The path details are stored in `nav_path` and `semantic_path`.
 
+## Hosted UI URL (GitHub Pages)
+
+The React frontend is published to GitHub Pages:
+
+**https://kmann11.github.io/simulated-usability-runner/**
+
+That URL is the **UI only**. GitHub Pages cannot run FastAPI or Playwright. To run experiments from the hosted UI, point it at a separately hosted API via the Actions variable `VITE_API_BASE` (see `frontend/README.md`). Local full-stack use remains: Vite on port 5273 + `uvicorn` on 8000.
+
 ## Optional FastAPI Wrapper
 
 The FastAPI wrapper exists at:
@@ -240,7 +248,7 @@ Run it with:
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-This is useful for a future app-like version, but the current primary experience is the Jupyter form.
+A React UI for this API lives in `frontend/` (local: `npm run dev`; hosted: GitHub Pages above). The Jupyter form remains available for notebook-based runs.
 
 ## Stress Benchmark
 

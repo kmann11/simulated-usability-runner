@@ -56,7 +56,12 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    # Local Vite dev servers + the GitHub Pages hosted UI
+    # (https://<user>.github.io/simulated-usability-runner/).
+    allow_origin_regex=(
+        r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+        r"|https://[\w-]+\.github\.io$"
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

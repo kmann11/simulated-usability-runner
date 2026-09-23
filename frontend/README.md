@@ -62,6 +62,38 @@ npm run build
 
 Outputs static assets in `frontend/dist/`. You can serve them from any static host or behind the FastAPI server.
 
+For a GitHub Pages–shaped local build:
+
+```bash
+GITHUB_PAGES=true npm run build
+```
+
+That sets Vite `base` to `/simulated-usability-runner/` so asset URLs match the hosted path.
+
+## Hosted UI URL (GitHub Pages)
+
+The React UI is deployed automatically to GitHub Pages on every push to `main` that touches `frontend/` (workflow: `.github/workflows/deploy-pages.yml`).
+
+**Live URL:** [https://kmann11.github.io/simulated-usability-runner/](https://kmann11.github.io/simulated-usability-runner/)
+
+### What works from that URL
+
+- The full configure / review UI (forms, study library, heuristics/TLX panels, etc.)
+- Static browsing of the frontend without installing Node locally
+
+### What does **not** work from Pages alone
+
+GitHub Pages serves **static files only**. It cannot run FastAPI, Playwright, or any experiment. Health checks and runs will fail until you point the UI at a real backend.
+
+### Pointing the hosted UI at an API
+
+1. Host `uvicorn app.main:app` somewhere with a public HTTPS URL (e.g. [Render](https://render.com) or [Railway](https://railway.app)).
+2. Ensure that host allows CORS from `https://kmann11.github.io` (the FastAPI app already matches `*.github.io`).
+3. Set the GitHub Actions repository variable **`VITE_API_BASE`** to that API origin (no trailing slash), e.g. `https://your-service.onrender.com`.
+4. Re-run **Deploy frontend to GitHub Pages** (or push a frontend change) so the build bakes the variable in.
+
+Alternatively, for local-only API use, run the UI with Vite (`npm run dev`) against `http://localhost:8000` — browsers block HTTPS Pages → HTTP localhost (mixed content).
+
 ## Notes
 
 - `POST /run` is synchronous on the backend; the UI shows a "Running…" banner until the response returns. Long runs may take minutes — that is expected.
