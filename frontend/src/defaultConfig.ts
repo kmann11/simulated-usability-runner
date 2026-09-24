@@ -16,8 +16,9 @@ function personaFromSegment(segmentId: string) {
 }
 
 export const DEFAULT_CONFIG: ExperimentConfig = {
-  experiment_name: "generic_checkout_study",
-  start_url: "https://example.com",
+  experiment_name: "my_first_study",
+  // Blank until the user pastes a real prototype link (not a fake ready URL).
+  start_url: "",
   lob: "expedia",
   tasks: [
     "Search for a hotel stay for 2 adults for next weekend.",
@@ -31,7 +32,8 @@ export const DEFAULT_CONFIG: ExperimentConfig = {
   },
   max_steps: 25,
   click_timeout_ms: 5000,
-  runs_per_persona: 2,
+  // Light first-run default: one try each for a couple of traveler types.
+  runs_per_persona: 1,
   output_file: "output/generic_usability_results.csv",
   model: "gpt-4o",
   // Friendly defaults for real consumer sites (Expedia, Vrbo, etc.).
@@ -63,16 +65,10 @@ export const DEFAULT_CONFIG: ExperimentConfig = {
     prefer_labels: ["search", "add to cart", "checkout"],
     avoid_labels: ["delete", "remove", "sign out", "cancel order"],
   },
-  // Every non-custom segment visible under the default Expedia LOB:
-  // 4 brand segments (Quality Seeker primary, Family, Couple, Latinx) plus
-  // 2 cross-brand ones (Gen Z, High Value). Users can remove any they don't
-  // want. Keep this order in sync with ConfigForm.handleLobChange.
+  // Light first-run set: primary segment + one more. Users can add others.
+  // Keep in sync with ConfigForm.handleLobChange slice(0, 2) behavior.
   personas: [
     personaFromSegment("quality_seeker"),
     personaFromSegment("family_traveler"),
-    personaFromSegment("couple_traveler"),
-    personaFromSegment("latinx_traveler"),
-    personaFromSegment("gen_z_traveler"),
-    personaFromSegment("high_value_traveler"),
   ],
 };

@@ -1,4 +1,9 @@
-const PLACEHOLDER_NAMES = new Set(["", "generic_checkout_study", "Untitled study"]);
+const PLACEHOLDER_NAMES = new Set([
+  "",
+  "generic_checkout_study",
+  "my_first_study",
+  "Untitled study",
+]);
 
 export function isPlaceholderStudyName(name: string): boolean {
   return PLACEHOLDER_NAMES.has(name.trim());

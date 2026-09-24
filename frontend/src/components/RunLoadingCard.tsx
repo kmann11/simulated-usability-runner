@@ -55,7 +55,7 @@ export function RunLoadingCard({
   onStop,
   onAuthComplete,
   stopDisabled = false,
-  interactiveAuthAvailable = true,
+  interactiveAuthAvailable = false,
 }: RunLoadingCardProps) {
   const [now, setNow] = useState(() => Date.now());
   const signInCopy = useMemo(() => signInCopyForUrl(config.start_url), [config.start_url]);

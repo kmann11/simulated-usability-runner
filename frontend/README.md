@@ -1,23 +1,29 @@
-# Simulated Usability Runner — Frontend
+# Simulated Usability Runner - Frontend
 
-A small Vite + React + TypeScript UI for the FastAPI backend in `app/main.py`.
+Vite + React + TypeScript UI for the FastAPI backend in `app/main.py`.
 
-It is intentionally internal-tool quality: a single page with two tabs ("Run experiment" and "Stress benchmark") that posts to the existing endpoints. The Python Playwright runner stays untouched.
+Single-page configure / run / results experience for researchers and PMs. The Python Playwright runner stays in `scripts/`.
+
+**Live Pages URL:** [https://kmann11.github.io/simulated-usability-runner/](https://kmann11.github.io/simulated-usability-runner/)
+
+That URL is **UI only** until an API is connected. See **[HOSTING.md](../HOSTING.md)**.
 
 ## What it does
 
-- Edits an experiment config in a form (mirrors `configs/generic_usability_experiment.example.json`)
-- Imports / exports the config as JSON
-- Calls `POST /validate` and renders errors + warnings + a config preview
-- Starts runs with `POST /runs`, polls `GET /runs/{job_id}`, and can cancel or complete interactive auth
-- Falls back documentation still mentions legacy `POST /run` (sync) on the backend
-- Calls `POST /stress` and renders the per-fixture summary table
-- Polls `GET /healthz` every 15 seconds and shows a status badge (including whether interactive auth is available)
+- Edits an experiment config (LOB, tasks, traveler types, success signals)
+- Starts runs with **`POST /runs`**, polls **`GET /runs/{job_id}`**, and can cancel or complete interactive auth
+- Validates with `POST /validate`
+- Optional design scorecard (heuristics) and **Synthetic TLX** (not human NASA TLX)
+- Study share links copy **setup only** (not results); teammate still needs a connected runner
+- Polls `GET /healthz` every 15s; on failure, shows a truth banner, hard-disables the primary CTA, and never promises desktop Chrome login
+- Stress benchmark via `POST /stress` (local fixtures)
+
+Legacy sync `POST /run` remains on the backend for non-UI callers.
 
 ## Prerequisites
 
 - Node 18+ (Node 20 LTS recommended)
-- The FastAPI backend running locally (defaults to `http://localhost:8000`)
+- FastAPI backend reachable (local default `http://localhost:8000`, or a hosted API after `VITE_API_BASE` is set)
 
 ## Install
 
@@ -28,32 +34,31 @@ npm install
 
 ## Run the dev server
 
-In a separate terminal, start the backend first:
+Start the backend first (repo root):
 
 ```bash
-# from repo root
 source .venv/bin/activate
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Then start the frontend:
+Then:
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-The dev server runs on [http://localhost:5273](http://localhost:5273) by default. Override with `VITE_PORT` (in `.env.local` or inline, e.g. `VITE_PORT=5374 npm run dev`) if 5273 is taken too. The port is intentionally not the Vite default of 5173 so this app can run alongside other Vite projects without colliding. Requests to `/api/*` are proxied to the FastAPI backend (path rewrite `/api/run` → `/run`), so the browser does not need CORS in dev.
+Dev server: [http://localhost:5273](http://localhost:5273) (`VITE_PORT` to override). `/api/*` proxies to FastAPI.
 
 ## Configuration
 
-Copy `.env.example` to `.env.local` to override defaults:
+Copy `.env.example` to `.env.local` if needed:
 
-| Variable                  | Purpose                                                                                                                                                            |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `VITE_PORT`               | Dev-server port. Default `5273` (chosen so this app does not collide with other Vite projects on `5173`).                                                          |
-| `VITE_API_PROXY_TARGET`   | Target URL the Vite dev proxy forwards `/api/*` to. Default `http://localhost:8000`.                                                                               |
-| `VITE_API_BASE`           | Optional. If set, the browser fetches directly from this URL (no proxy). Use for production-style deployments where the backend is reachable from the browser. |
+| Variable                | Purpose |
+| ----------------------- | ------- |
+| `VITE_PORT`             | Dev-server port (default `5273`) |
+| `VITE_API_PROXY_TARGET` | Proxy target for `/api/*` (default `http://localhost:8000`) |
+| `VITE_API_BASE`         | Optional absolute API origin (no trailing slash). Used for production Pages builds after Render deploy. **Do not invent a URL.** |
 
 ## Build
 
@@ -61,46 +66,26 @@ Copy `.env.example` to `.env.local` to override defaults:
 npm run build
 ```
 
-Outputs static assets in `frontend/dist/`. You can serve them from any static host or behind the FastAPI server.
-
-For a GitHub Pages–shaped local build:
+GitHub Pages–shaped build:
 
 ```bash
 GITHUB_PAGES=true npm run build
 ```
 
-That sets Vite `base` to `/simulated-usability-runner/` so asset URLs match the hosted path.
+## Hosted UI + API
 
-## Hosted UI URL (GitHub Pages)
+Full steps: **[HOSTING.md](../HOSTING.md)**.
 
-The React UI is deployed automatically to GitHub Pages on every push to `main` that touches `frontend/` (workflow: `.github/workflows/deploy-pages.yml`).
+1. Deploy API (Render Blueprint / Docker).
+2. Set Actions variable `VITE_API_BASE` to that HTTPS origin.
+3. Redeploy Pages.
 
-**Live URL:** [https://kmann11.github.io/simulated-usability-runner/](https://kmann11.github.io/simulated-usability-runner/)
+Until then, health and runs fail on github.io by design. The UI explains this and disables **Open link & run test**.
 
-### What works from that URL
-
-- The full configure / review UI (forms, study library, heuristics/TLX panels, etc.)
-- Static browsing of the frontend without installing Node locally
-
-### What does **not** work from Pages alone
-
-GitHub Pages serves **static files only**. It cannot run FastAPI, Playwright, or any experiment. Health checks and runs will fail until you point the UI at a real backend.
-
-### Pointing the hosted UI at an API
-
-See **[HOSTING.md](../HOSTING.md)** for Render Blueprint deploy + `VITE_API_BASE` wiring.
-
-1. Host `uvicorn app.main:app` somewhere with a public HTTPS URL (e.g. [Render](https://render.com) via this repo’s `render.yaml`, or [Railway](https://railway.app)).
-2. Ensure that host allows CORS from `https://kmann11.github.io` (the FastAPI app matches `*.github.io`, `*.onrender.com`, and Railway hosts).
-3. Set the GitHub Actions repository variable **`VITE_API_BASE`** to that API origin (no trailing slash), e.g. `https://your-service.onrender.com`.
-4. Re-run **Deploy frontend to GitHub Pages** (or push a frontend change) so the build bakes the variable in.
-
-Alternatively, for local-only API use, run the UI with Vite (`npm run dev`) against `http://localhost:8000` — browsers block HTTPS Pages → HTTP localhost (mixed content).
-
-**Auth caveat:** Figma/GitHub interactive login popups do not work well on cloud headless hosts — use public links or run locally for SSO flows.
+**Auth:** Figma/GitHub interactive login popups do not work on cloud headless hosts. Use public links or a local backend.
 
 ## Notes
 
-- Primary path is async: `POST /runs` then poll `GET /runs/{job_id}`. Legacy `POST /run` remains on the backend for sync callers. Long runs may take minutes — that is expected.
-- `output_file` paths are resolved relative to the repo root by the backend; e.g. `output/foo.csv` lands in `<repo>/output/foo.csv`.
-- The stress benchmark runs against the bundled local HTML fixtures, so it does not touch any live URL and is safe to run anytime to sanity-check the runner.
+- Primary path is async `/runs`. Long runs may take minutes.
+- `output_file` is mostly for local/API CSV paths; safe to leave alone in the hosted UI.
+- Jupyter notebook under `notebooks/` is an advanced local alternate, not the primary team UI.

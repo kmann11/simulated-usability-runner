@@ -55,8 +55,8 @@ export function StudySharePanel({
         <div>
           <h3>Share with your team</h3>
           <p className="muted small">
-            Copy a link to send in Slack or email. Your teammate opens it here with the same
-            prototype, tasks, and testers, then runs the test. No files to upload.
+            Copies the study setup only (link, tasks, testers, options), not results. Your teammate
+            still needs a connected runner to click Open link &amp; run test. No files to upload.
           </p>
         </div>
       </header>

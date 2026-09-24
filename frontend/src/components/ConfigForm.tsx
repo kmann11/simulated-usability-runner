@@ -5,6 +5,7 @@ import {
   guessPrototypeSource,
   placeholderForPrototypeSource,
   PROTOTYPE_HELP,
+  PROTOTYPE_HELP_NO_DESKTOP_AUTH,
   PROTOTYPE_SOURCE_LABEL,
 } from "../prototypeSource";
 import { buildRunPlanCopy, formatLinkLabel, isValidPrototypeUrl } from "../linkPreview";
@@ -47,7 +48,7 @@ export function ConfigForm({
   options,
   onOptionsChange,
   disabled,
-  interactiveAuthAvailable = true,
+  interactiveAuthAvailable = false,
 }: ConfigFormProps) {
   const { lobs, segments } = useCatalog();
   const studyNameTouchedRef = useRef(false);
@@ -97,7 +98,8 @@ export function ConfigForm({
     const brand = visible.filter((s) => s.scope !== "cross_brand" && !s.is_primary);
     const cross = visible.filter((s) => s.scope === "cross_brand");
     const ordered = [...primary, ...brand, ...cross];
-    const nextPersonas = ordered.map((seg) => ({
+    // Keep first-run light: primary + one more (not the full catalog).
+    const nextPersonas = ordered.slice(0, 2).map((seg) => ({
       name: seg.name,
       segment: seg.id,
       levers: { ...seg.levers },
@@ -158,7 +160,10 @@ export function ConfigForm({
                   Detected: {PROTOTYPE_SOURCE_LABEL[detectedSource]}
                 </span>
                 {". "}
-                {PROTOTYPE_HELP[detectedSource]}
+                {interactiveAuthAvailable
+                  ? PROTOTYPE_HELP[detectedSource]
+                  : (PROTOTYPE_HELP_NO_DESKTOP_AUTH[detectedSource] ??
+                    PROTOTYPE_HELP[detectedSource])}
               </small>
             ) : (
               <small>{DEFAULT_PROTOTYPE_HELP}</small>
@@ -186,8 +191,9 @@ export function ConfigForm({
                 <span className="toggle-text">
                   <strong>Skip sign-in (public link)</strong>
                   <small>
-                    Use when the Figma/GitHub page is already public and does not need a login
-                    window.
+                    {!interactiveAuthAvailable
+                      ? "Required here: desktop Chrome login is not available. Use a public Figma/GitHub link."
+                      : "Use when the Figma/GitHub page is already public and does not need a login window."}
                   </small>
                 </span>
               </label>
@@ -323,7 +329,7 @@ export function ConfigForm({
               value={config.runs_per_persona}
               onChange={(event) => update("runs_per_persona", Number(event.target.value))}
             />
-            <small>2 is a good default. Patterns, not one lucky run.</small>
+            <small>1 is fine for a quick first pass. Raise to 2 if you want patterns, not one lucky run.</small>
           </label>
           <label>
             <span>Time limit per try (seconds)</span>
@@ -358,7 +364,10 @@ export function ConfigForm({
             />
             <span className="toggle-text">
               <strong>Workload forecast (Synthetic TLX)</strong>
-              <small>Directional NASA TLX-style load estimate from the simulated walkthrough.</small>
+              <small>
+                Not a human NASA TLX questionnaire. Directional load estimate from the simulated
+                walkthrough only.
+              </small>
             </span>
           </label>
           <label className="toggle-row">
@@ -405,7 +414,10 @@ export function ConfigForm({
               onChange={(event) => update("output_file", event.target.value)}
               placeholder="output/checkout_flow.csv"
             />
-            <small>Leave as-is unless your team gave you a specific folder.</small>
+            <small>
+              Optional CSV path used by some local/API setups. Safe to leave as-is for the hosted
+              UI.
+            </small>
           </label>
           <label>
             <span>AI assistant (optional)</span>

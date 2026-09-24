@@ -160,7 +160,7 @@ export function buildStudyQaFindings(
       category: "protocol",
       title: "Setup looks ready",
       detail: "Your link, tasks, testers, and screenshot settings look good for a directional run.",
-      suggestion: "Run the test, then use the results to plan your next design review or user session.",
+      suggestion: "Click Open link & run test, then use the results to plan your next design review or user session.",
     });
   }
 

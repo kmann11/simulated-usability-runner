@@ -12,13 +12,21 @@ export const PROTOTYPE_HELP: Record<PrototypeSource, string> = {
   preview:
     "This looks like a design preview. Make sure the link opens in your browser before you run. Ask your designer if it does not load.",
   figma:
-    "Figma usually requires you to be signed in. When you run, we open a browser window on this computer. Sign in, open your prototype, then click I'm signed in in the app.",
+    "Figma usually requires sign-in. With a local backend, a Chrome window can open on this computer for one-time login. On GitHub Pages or cloud, use a public prototype link or Skip sign-in.",
   github:
-    "GitHub usually requires you to be signed in. When you run, we open a browser window on this computer. Sign in, open your preview or page, then click I'm signed in in the app.",
+    "GitHub usually requires sign-in. With a local backend, a Chrome window can open on this computer for one-time login. On GitHub Pages or cloud, use a public preview link or Skip sign-in.",
   staging:
     "This looks like a staging or QA link, good for pre-launch review. Use the same address you would send a teammate to review.",
   live:
     "This looks like a live public site. It may ask for login or block automated visits. A prototype or staging link is usually easier.",
+};
+
+/** Help text that never promises a desktop Chrome popup (Pages / cloud / API down). */
+export const PROTOTYPE_HELP_NO_DESKTOP_AUTH: Partial<Record<PrototypeSource, string>> = {
+  figma:
+    "Figma usually requires sign-in, but desktop Chrome login is not available here. Use a public prototype link, or run the API locally for interactive sign-in.",
+  github:
+    "GitHub usually requires sign-in, but desktop Chrome login is not available here. Use a public preview link, or run the API locally for interactive sign-in.",
 };
 
 export const DEFAULT_PROTOTYPE_HELP =
@@ -47,5 +55,5 @@ export function guessPrototypeSource(url: string): PrototypeSource | null {
 export function placeholderForPrototypeSource(source: PrototypeSource | null): string {
   if (source === "figma") return "https://www.figma.com/proto/...";
   if (source === "github") return "https://github.com/... or https://....github.io/...";
-  return "https://your-preview-link.example.com";
+  return "Paste your prototype or staging link (https://…)";
 }

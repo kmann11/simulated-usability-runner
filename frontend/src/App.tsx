@@ -13,7 +13,7 @@ import { TlxScorecard } from "./components/TlxScorecard";
 import { DEFAULT_CONFIG } from "./defaultConfig";
 import { StudyDesignQa } from "./components/StudyDesignQa";
 import { clearShareFromLocation, readShareFromLocation, type SharedStudySetup } from "./studyShare";
-import { configForRun, signInCopyForUrl } from "./prototypeAuth";
+import { configForRun, HOSTING_DOCS_URL, signInCopyForUrl } from "./prototypeAuth";
 import { isValidPrototypeUrl } from "./linkPreview";
 import { EMPTY_STUDY_METADATA, type SavedStudy, type StudyMetadata } from "./studyLibrary";
 import type { ExperimentConfig, HealthResponse, RunJobStatus, RunResponse, ValidateResponse } from "./types";
@@ -24,16 +24,21 @@ type NoticeState = {
   variant: "warn" | "info";
   messages: string[];
 };
+/** null = still checking; true/false = last health probe result */
+type ApiReachable = boolean | null;
+
+const DEFAULT_RUN_OPTIONS: RunOptionsState = {
+  include_heuristics: true,
+  include_tlx: true,
+  capture_screenshots: true,
+  // Pessimistic until /healthz confirms a local interactive backend.
+  figma_sign_in: false,
+  sign_in_before_run: false,
+};
 
 export default function App() {
   const [config, setConfig] = useState<ExperimentConfig>(DEFAULT_CONFIG);
-  const [options, setOptions] = useState<RunOptionsState>({
-    include_heuristics: true,
-    include_tlx: true,
-    capture_screenshots: true,
-    figma_sign_in: true,
-    sign_in_before_run: true,
-  });
+  const [options, setOptions] = useState<RunOptionsState>(DEFAULT_RUN_OPTIONS);
   const [studyMetadata, setStudyMetadata] = useState<StudyMetadata>(EMPTY_STUDY_METADATA);
   const [checking, setChecking] = useState(false);
   const [running, setRunning] = useState(false);
@@ -45,16 +50,26 @@ export default function App() {
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [runJob, setRunJob] = useState<RunJobStatus | null>(null);
   const [stoppingRun, setStoppingRun] = useState(false);
-  const [interactiveAuthAvailable, setInteractiveAuthAvailable] = useState(true);
+  // Never default true: Pages/cloud must not promise desktop Chrome until health says so.
+  const [interactiveAuthAvailable, setInteractiveAuthAvailable] = useState(false);
+  const [apiReachable, setApiReachable] = useState<ApiReachable>(null);
   const loadingRef = useRef<HTMLDivElement | null>(null);
   const resultsRef = useRef<HTMLDivElement | null>(null);
 
   const busy = checking || running;
+  const apiDown = apiReachable === false;
+  const canRun = apiReachable === true && !busy;
   const review = result?.heuristic_review ?? null;
   const tlxReview = result?.tlx_review ?? null;
+  const hasPrototypeUrl = Boolean(config.start_url.trim()) && isValidPrototypeUrl(config.start_url);
 
   const handleHealth = useCallback((health: HealthResponse | null) => {
-    if (!health) return;
+    if (!health) {
+      setApiReachable(false);
+      setInteractiveAuthAvailable(false);
+      return;
+    }
+    setApiReachable(true);
     setInteractiveAuthAvailable(health.interactive_auth_available !== false);
   }, []);
 
@@ -69,13 +84,15 @@ export default function App() {
   }, [interactiveAuthAvailable, options.sign_in_before_run]);
 
   const applySharedSetup = (setup: SharedStudySetup, sourceLabel: string) => {
+    const wantSignIn = setup.options.sign_in_before_run ?? setup.options.figma_sign_in ?? false;
+    const signIn = interactiveAuthAvailable && wantSignIn;
     setConfig(setup.config);
     setOptions({
       include_heuristics: setup.options.include_heuristics,
       include_tlx: setup.options.include_tlx ?? true,
       capture_screenshots: setup.options.capture_screenshots,
-      sign_in_before_run: setup.options.sign_in_before_run ?? setup.options.figma_sign_in ?? true,
-      figma_sign_in: setup.options.figma_sign_in,
+      sign_in_before_run: signIn,
+      figma_sign_in: signIn,
     });
     setStudyMetadata(setup.metadata);
     setCheck(null);
@@ -85,7 +102,7 @@ export default function App() {
       title: "Shared study opened",
       variant: "info",
       messages: [
-        `${sourceLabel} Review the prototype link and tasks, then click Run the test when ready.`,
+        `${sourceLabel} This link loaded the study setup only (not results). Review the prototype link and tasks, then click Open link & run test when your runner is connected.`,
       ],
     });
     window.requestAnimationFrame(() => {
@@ -186,11 +203,10 @@ export default function App() {
   const reset = () => {
     setConfig(DEFAULT_CONFIG);
     setOptions({
-      include_heuristics: true,
-      include_tlx: true,
-      capture_screenshots: true,
-      figma_sign_in: true,
-      sign_in_before_run: true,
+      ...DEFAULT_RUN_OPTIONS,
+      // Keep sign-in off unless health already confirmed interactive auth.
+      figma_sign_in: interactiveAuthAvailable,
+      sign_in_before_run: interactiveAuthAvailable,
     });
     setCheck(null);
     setResult(null);
@@ -204,13 +220,15 @@ export default function App() {
   };
 
   const handleLoadStudy = (study: SavedStudy) => {
+    const wantSignIn = study.options.sign_in_before_run ?? study.options.figma_sign_in ?? false;
+    const signIn = interactiveAuthAvailable && wantSignIn;
     setConfig(study.config);
     setOptions({
       include_heuristics: study.options.include_heuristics,
       include_tlx: study.options.include_tlx ?? true,
       capture_screenshots: study.options.capture_screenshots,
-      sign_in_before_run: study.options.sign_in_before_run ?? study.options.figma_sign_in ?? true,
-      figma_sign_in: study.options.figma_sign_in,
+      sign_in_before_run: signIn,
+      figma_sign_in: signIn,
     });
     setResult(study.result);
     setCheck(null);
@@ -264,6 +282,18 @@ export default function App() {
   };
 
   const handleRun = async () => {
+    if (apiDown || apiReachable !== true) {
+      setError(null);
+      setNotice({
+        title: "Runner not connected",
+        variant: "warn",
+        messages: [
+          "This page is UI only until a backend is connected. Deploy the API and set VITE_API_BASE, or run the API locally. See HOSTING.md for steps.",
+        ],
+      });
+      return;
+    }
+
     const preflight = preflightRun();
     if (preflight.length > 0) {
       setError(null);
@@ -373,6 +403,23 @@ export default function App() {
         <HealthBadge onHealth={handleHealth} />
       </header>
 
+      {apiDown && (
+        <aside className="banner banner-warn truth-banner" role="status">
+          <p>
+            <strong>UI only until the runner is connected.</strong> This GitHub Pages site cannot
+            run Playwright by itself. Health checks and runs will fail until you deploy the API
+            (or run it locally) and point the UI at it.
+          </p>
+          <p className="muted small">
+            Setup steps:{" "}
+            <a href={HOSTING_DOCS_URL} target="_blank" rel="noreferrer">
+              HOSTING.md
+            </a>
+            . Do not invent a Render URL; use the one from your deploy.
+          </p>
+        </aside>
+      )}
+
       <ConfigForm
         config={config}
         onChange={setConfig}
@@ -393,10 +440,22 @@ export default function App() {
       />
 
       <div className="run-bar">
-        <button type="button" className="btn-primary big" onClick={handleRun} disabled={busy}>
+        <button
+          type="button"
+          className="btn-primary big"
+          onClick={handleRun}
+          disabled={!canRun || !hasPrototypeUrl}
+          title={
+            apiDown
+              ? "Connect a runner first (see HOSTING.md)"
+              : !hasPrototypeUrl
+                ? "Paste a valid https:// prototype link first"
+                : undefined
+          }
+        >
           {running ? "Running…" : "Open link & run test"}
         </button>
-        <button type="button" className="btn-secondary" onClick={handleCheck} disabled={busy}>
+        <button type="button" className="btn-secondary" onClick={handleCheck} disabled={!canRun}>
           {checking ? "Checking…" : "Check my setup"}
         </button>
         <div className="spacer" />
@@ -405,8 +464,22 @@ export default function App() {
         </button>
       </div>
       <p className="run-bar-hint muted small">
-        Not sure everything is right? Click <strong>Check my setup</strong> first. It flags missing
-        links or vague tasks before you run.
+        {apiDown ? (
+          <>
+            Primary actions stay off until the runner responds. See{" "}
+            <a href={HOSTING_DOCS_URL} target="_blank" rel="noreferrer">
+              HOSTING.md
+            </a>
+            .
+          </>
+        ) : !hasPrototypeUrl ? (
+          <>Paste your prototype link above before you can run.</>
+        ) : (
+          <>
+            Not sure everything is right? Click <strong>Check my setup</strong> first. It flags
+            missing links or vague tasks before you run.
+          </>
+        )}
       </p>
 
       {running && (
@@ -437,7 +510,10 @@ export default function App() {
           </header>
 
           {check.errors.length === 0 && check.warnings.length === 0 && (
-            <p className="muted">Everything looks good. Click &ldquo;Run the test&rdquo; when you&apos;re ready.</p>
+            <p className="muted">
+              Everything looks good. Click &ldquo;Open link &amp; run test&rdquo; when you&apos;re
+              ready.
+            </p>
           )}
 
           <MessageList title="Please fix these" variant="error" messages={check.errors} />
@@ -514,7 +590,7 @@ export default function App() {
             <section className="card">
               <header className="card-header">
                 <h3>Workload forecast</h3>
-                <span className="badge badge-muted">Synthetic TLX</span>
+                <span className="badge badge-muted">Synthetic TLX · not human NASA TLX</span>
               </header>
               <TlxScorecard
                 review={tlxReview}

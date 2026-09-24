@@ -389,6 +389,29 @@ input[type="range"] {
   font-size: 14px;
 }
 
+.banner-warn {
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+  color: var(--warn-text);
+}
+
+.truth-banner {
+  margin: 0 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.truth-banner p {
+  margin: 0;
+}
+
+.truth-banner a {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
 .run-loading-card {
   gap: 16px;
   background:

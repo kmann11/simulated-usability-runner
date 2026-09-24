@@ -5,6 +5,10 @@ GitHub Pages serves the **UI only**
 Playwright and FastAPI must run on a separate host. This repo ships a `Dockerfile`
 and a Render Blueprint (`render.yaml`) for that API.
 
+The hosted UI shows a **truth banner** and disables **Open link & run test** until
+`GET /healthz` succeeds. Interactive Figma/GitHub Chrome login is never promised
+from Pages or other headless hosts (`interactive_auth_available: false`).
+
 ## Status checklist
 
 | Step | What | Done when |

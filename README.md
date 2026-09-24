@@ -1,28 +1,64 @@
 # Simulated Usability Runner
 
-This repo houses the current Playwright-based simulated usability workflow.
+**What it is:** a Playwright-based tool that runs automated walkthroughs on a link you provide (Figma, GitHub preview, staging, or live). It simulates different traveler types trying your tasks and surfaces hesitation, misclicks, backtracks, and abandon patterns. It is a lightweight pre-test layer before human usability sessions, not a replacement for talking to real people.
 
-The goal is to give researchers and PMs a lightweight pre-testing layer for structured product flows before human usability sessions. It is not intended to replace human usability testing.
+**Hosted UI (GitHub Pages):** [https://kmann11.github.io/simulated-usability-runner/](https://kmann11.github.io/simulated-usability-runner/)
 
-Use it to:
+**That URL is UI only until an API is connected.** Pages cannot run FastAPI or Playwright. Health checks and runs fail until you deploy the backend and set `VITE_API_BASE`. See **[HOSTING.md](HOSTING.md)** (do not invent a Render URL).
 
-- explore a live or staging flow before human sessions
-- check whether a task setup is clear
-- see where simulated users loop, hesitate, misclick, backtrack, or abandon
-- catch brittle paths or obvious label/path friction
-- identify behavior patterns worth validating with people
+| For | Not for |
+| --- | --- |
+| Researchers and PMs exploring a flow before human sessions | Treating output as human truth |
+| Checking whether a task setup is clear | Replacing moderated usability testing |
+| Catching brittle paths or obvious label/path friction | Running against third-party production without permission |
 
-## Current Housing
+## Quick start (recommended)
 
-The team-facing experience is a Jupyter notebook form.
+1. **UI:** open the Pages URL above, or run the React app locally (`frontend/`).
+2. **API:** run FastAPI locally, or deploy with Docker / Render Blueprint ([HOSTING.md](HOSTING.md)).
+3. Paste a real prototype link, keep 1–2 traveler types for a first pass, then **Open link & run test**.
 
-Open:
+Primary run path is **async**: `POST /runs` then poll `GET /runs/{job_id}`. Legacy sync `POST /run` still exists for callers that need it.
+
+### Local full stack
+
+```bash
+# API (repo root)
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -r requirements.txt
+python3 -m playwright install chromium
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# UI (separate terminal)
+cd frontend && npm install && npm run dev
+```
+
+Open [http://localhost:5273](http://localhost:5273). Dev proxy sends `/api/*` to the backend.
+
+## Repo layout
+
+```text
+app/                 FastAPI backend (validate, async /runs, healthz, stress)
+frontend/            Vite + React UI (also published to GitHub Pages)
+configs/             Example and active experiment JSON
+scripts/             Playwright runner, heuristics, TLX, segments, Jupyter shell
+notebooks/           Optional Jupyter form (advanced / local alternate)
+output/              Run CSV and session artifacts
+Dockerfile           API container image
+render.yaml          Render Blueprint for the API
+HOSTING.md           Pages + API wiring (VITE_API_BASE)
+requirements.txt
+README.md
+```
+
+## Advanced / local alternate: Jupyter
+
+The team-facing path is the React UI. The notebook remains available for local exploratory runs:
 
 ```text
 notebooks/generic_usability_runner.ipynb
 ```
-
-Run the launcher cell:
 
 ```python
 from scripts.generic_usability_shell import build_generic_jupyter_form
@@ -30,37 +66,7 @@ from scripts.generic_usability_shell import build_generic_jupyter_form
 build_generic_jupyter_form("configs/generic_usability_experiment.json")
 ```
 
-That opens the form inside Jupyter.
-
-## Repo Layout
-
-```text
-app/
-├─ __init__.py
-└─ main.py
-
-configs/
-├─ generic_usability_experiment.example.json
-└─ generic_usability_experiment.json
-
-notebooks/
-└─ generic_usability_runner.ipynb
-
-scripts/
-├─ __init__.py
-├─ generic_usability_runner.py
-├─ generic_usability_shell.py
-└─ generic_usability_stress.py
-
-output/
-└─ .gitkeep
-
-requirements.txt
-README.md
-.gitignore
-```
-
-## Setup
+## Setup (Python)
 
 From the repo root:
 
@@ -73,48 +79,29 @@ python3 -m pip install -r requirements.txt
 python3 -m playwright install chromium
 ```
 
-If the team is running this in EGAP JupyterHub, use the standard environment if one is provided. Otherwise, the venv setup above works.
-
 ## Validate With GitHub Actions
 
-This repo includes an Actions workflow at:
-
-```text
-.github/workflows/validation.yml
-```
-
-GitHub runs it on every push, every pull request, and any manual run from the Actions tab.
+Workflow: `.github/workflows/validation.yml` (push, PR, and manual).
 
 What it validates:
 
-- installs the repo dependencies
-- installs Playwright Chromium
-- checks the active config, example config, and notebook JSON
-- compiles the Python modules
-- imports the runner and Jupyter form shell
-- launches a real headless Chromium browser through Playwright
+- installs dependencies and Playwright Chromium
+- checks configs and notebook JSON
+- compiles Python modules and imports the runner
 - runs the local fixture smoke benchmark
-- uploads the validation CSVs as a workflow artifact
+- uploads validation CSVs as an artifact
 
-To run it manually in GitHub:
-
-1. Open the repo in GitHub.
-2. Click **Actions**.
-3. Select **Validate simulated usability runner**.
-4. Click **Run workflow**.
-5. Open the finished run and download the **validation-output** artifact if you want the CSVs.
-
-This validates the runner in batch mode. It does not replace the Jupyter form, which is still the cleanest team-facing way to configure and launch a study interactively.
+This validates the runner in batch mode. Interactive configuration is via the React UI (or the Jupyter form as an alternate).
 
 ## Configure a Study
 
-The active config is:
+Active config (CLI / notebook):
 
 ```text
 configs/generic_usability_experiment.json
 ```
 
-The template copy is:
+Template:
 
 ```text
 configs/generic_usability_experiment.example.json
@@ -124,6 +111,7 @@ Current config fields include:
 
 - `experiment_name`
 - `start_url`
+- `lob`
 - `tasks`
 - `success_criteria.url_contains`
 - `success_criteria.text_contains`
@@ -143,39 +131,7 @@ Current config fields include:
 - `site_hints.avoid_labels`
 - `personas`
 
-Persona fields are:
-
-- `name`
-- `exploration`
-- `patience`
-- `attention`
-- `error_rate`
-
-## Run Through Jupyter
-
-Open JupyterLab, then open:
-
-```text
-notebooks/generic_usability_runner.ipynb
-```
-
-Run the form cell. The form supports:
-
-- study name
-- start URL
-- task list
-- success criteria
-- preferred labels
-- avoided labels
-- personas
-- run settings
-- config save/load/reset
-- JSON preview
-- environment checks
-- Chromium install helper
-- experiment run
-- stress benchmark run
-- CSV result summary
+Persona fields include segment id, levers, and derived behavior floats (`exploration`, `patience`, `attention`, `error_rate`).
 
 ## Run From Terminal
 
@@ -194,7 +150,7 @@ If `OPENAI_API_KEY` is not present, the runner uses the fallback policy.
 
 ## Output
 
-The current runner writes one row per simulated session.
+The runner writes one row per simulated session.
 
 Default output:
 
@@ -202,66 +158,41 @@ Default output:
 output/generic_usability_results.csv
 ```
 
-Columns:
+Columns include experiment name, URL, persona, steps, hesitation, misclick, backtrack, abandoned, nav/semantic path, and timestamp.
 
-- `experiment_name`
-- `start_url`
-- `persona`
-- `steps`
-- `hesitation`
-- `misclick`
-- `backtrack`
-- `abandoned`
-- `nav_path`
-- `semantic_path`
-- `timestamp`
+**Synthetic TLX** (optional in the UI) is a directional workload forecast from the simulation. It is **not** a human NASA TLX questionnaire.
 
-The path details are stored in `nav_path` and `semantic_path`.
-
-## Hosted UI URL (GitHub Pages)
-
-The React frontend is published to GitHub Pages:
-
-**https://kmann11.github.io/simulated-usability-runner/**
-
-That URL is the **UI only**. GitHub Pages cannot run FastAPI or Playwright. To run experiments from the hosted UI, deploy the API (Render Blueprint in this repo) and set the Actions variable `VITE_API_BASE` to the API HTTPS URL. Full steps: **[HOSTING.md](HOSTING.md)**.
-
-Local full-stack use remains: Vite on port 5273 + `uvicorn` on 8000.
-
-## Optional FastAPI Wrapper
-
-The FastAPI wrapper exists at:
+## FastAPI
 
 ```text
 app/main.py
 ```
 
-Endpoints:
+Notable endpoints:
 
-- `GET /`
 - `GET /healthz`
 - `POST /validate`
-- `POST /run`
-- `POST /runs` (async jobs)
+- `POST /runs` (async; primary)
+- `GET /runs/{job_id}`
+- `POST /runs/{job_id}/cancel`
+- `POST /runs/{job_id}/auth-complete`
+- `POST /run` (legacy sync)
 - `POST /stress`
-
-Run it with:
+- `GET /personas/segments`, `GET /personas/levers`
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-For cloud: use the root `Dockerfile` + `render.yaml` (see [HOSTING.md](HOSTING.md)). A React UI for this API lives in `frontend/` (local: `npm run dev`; hosted: GitHub Pages above). The Jupyter form remains available for notebook-based runs.
+Cloud: root `Dockerfile` + `render.yaml` ([HOSTING.md](HOSTING.md)). Frontend: `frontend/` (local `npm run dev`; hosted Pages URL above).
 
 ## Stress Benchmark
-
-The stress benchmark lives at:
 
 ```text
 scripts/generic_usability_stress.py
 ```
 
-It is for checking runner behavior against controlled fixtures. It is not the same as validating a product flow with human participants.
+Checks runner behavior against controlled HTML fixtures. Not the same as validating a product flow with people.
 
 ## Safety
 

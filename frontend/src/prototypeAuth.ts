@@ -11,7 +11,10 @@ export const SESSION_PATHS: Record<AuthProvider, string> = {
 };
 
 export const LOCAL_AUTH_ONLY_CALLOUT =
-  "Sign-in windows only work with a local backend. On cloud/headless hosts, use a public link or Skip sign-in.";
+  "Sign-in windows only work with a local backend. On GitHub Pages or cloud hosts, Chrome will not open on this computer. Use a public link or Skip sign-in.";
+
+export const HOSTING_DOCS_URL =
+  "https://github.com/kmann11/simulated-usability-runner/blob/main/HOSTING.md";
 
 export function getAuthProvider(url: string): AuthProvider | null {
   const source = guessPrototypeSource(url);
@@ -22,7 +25,7 @@ export function getAuthProvider(url: string): AuthProvider | null {
 export function needsInteractiveSignIn(
   url: string,
   options: RunOptionsState,
-  interactiveAuthAvailable = true,
+  interactiveAuthAvailable = false,
 ): boolean {
   if (!getAuthProvider(url)) return false;
   if (!interactiveAuthAvailable) return false;
@@ -35,7 +38,7 @@ export function needsInteractiveSignIn(
 export function configForRun(
   config: ExperimentConfig,
   options: RunOptionsState,
-  interactiveAuthAvailable = true,
+  interactiveAuthAvailable = false,
 ): ExperimentConfig {
   const provider = getAuthProvider(config.start_url);
   if (
@@ -119,7 +122,7 @@ export function isGitHubPrototypeUrl(url: string): boolean {
 export function shouldUseFigmaSignIn(
   url: string,
   options: RunOptionsState,
-  interactiveAuthAvailable = true,
+  interactiveAuthAvailable = false,
 ): boolean {
   return (
     getAuthProvider(url) === "figma" &&

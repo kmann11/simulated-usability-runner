@@ -1,19 +1,21 @@
 # Cursor Handoff
 
-This is the current state of the EG UXR design and site review tool.
+Current state of the EG UXR design and site review tool (simulated usability runner).
 
 ## What this project is
 
-This repo is an internal exploratory workflow for running a quick flow and heuristic check on a live experience or prototype using:
+Internal exploratory workflow for a quick flow + heuristic + optional Synthetic TLX check on a live experience or prototype using:
 
 - Playwright
-- research-backed segment profiles
+- research-backed segment profiles (LOB-scoped)
 - tunable behavioral levers
-- a FastAPI backend
-- a React frontend
+- FastAPI backend (`app/main.py`)
+- React frontend (`frontend/`), also on GitHub Pages
 
-It is meant to surface friction, pathing issues, and heuristic weak spots quickly.
-It is not meant to replace human research.
+It surfaces friction, pathing issues, and heuristic weak spots quickly. It does not replace human research.
+
+**Hosted UI:** https://kmann11.github.io/simulated-usability-runner/  
+**UI only until API is connected.** See `HOSTING.md`. Do not invent `VITE_API_BASE` / Render URLs.
 
 ## Current repo path
 
@@ -23,220 +25,108 @@ It is not meant to replace human research.
 
 ```text
 simulated-usability-runner/
-├─ .github/workflows/validation.yml
+├─ .github/workflows/
 ├─ app/
 │  └─ main.py
 ├─ configs/
-│  ├─ generic_usability_experiment.example.json
-│  └─ generic_usability_experiment.json
 ├─ frontend/
-│  ├─ package.json
 │  └─ src/
 │     ├─ App.tsx
 │     ├─ api/client.ts
-│     ├─ components/
-│     │  ├─ ConfigForm.tsx
-│     │  ├─ EvidenceGallery.tsx
-│     │  ├─ HeuristicCard.tsx
-│     │  ├─ HeuristicScorecard.tsx
-│     │  ├─ PersonaList.tsx
-│     │  ├─ StressPanel.tsx
-│     │  └─ SummaryCard.tsx
+│     ├─ components/   (ConfigForm, StudySharePanel, TlxScorecard, …)
 │     ├─ defaultConfig.ts
 │     ├─ segments.ts
-│     ├─ styles.css
-│     └─ types.ts
-├─ notebooks/
-│  └─ generic_usability_runner.ipynb
+│     └─ styles.css
+├─ notebooks/          (advanced / local Jupyter alternate)
 ├─ output/
 ├─ scripts/
 │  ├─ generic_usability_runner.py
-│  ├─ generic_usability_shell.py
-│  ├─ generic_usability_stress.py
 │  ├─ heuristic_review.py
-│  ├─ heuristic_signals.py
+│  ├─ tlx_review.py
 │  └─ persona_segments.py
+├─ Dockerfile
+├─ render.yaml
+├─ HOSTING.md
 ├─ CURSOR_HANDOFF.md
-├─ CURSOR_PROMPT.md
 ├─ README.md
-├─ RESULTS_AND_SEGMENTS_MAPPING.md
 └─ requirements.txt
 ```
 
 ## What already exists
 
-### Backend
+### Backend (`app/main.py`)
 
-`app/main.py` currently provides:
-
-- `GET /`
-- `GET /healthz`
-- `GET /personas/levers`
-- `GET /personas/segments`
+- `GET /`, `GET /healthz` (includes `interactive_auth_available`, `headless`)
+- `GET /personas/levers`, `GET /personas/segments` (LOB-aware)
 - `POST /validate`
-- `POST /run`
-- `POST /heuristics/review`
+- **`POST /runs`** (async jobs; primary UI path), `GET /runs/{job_id}`, cancel + auth-complete
+- `POST /run` (legacy sync)
+- `POST /heuristics/review`, `POST /stress`
 - `GET /artifacts/{path}`
-- `POST /stress`
 
-### Runner
+### Runner / reviews
 
-`scripts/generic_usability_runner.py`:
+- Playwright walkthrough with segment levers and screenshots
+- Heuristic review scorecard
+- **Synthetic TLX** (`scripts/tlx_review.py`): directional workload forecast; **not** human NASA TLX
+- CSV + artifact output under `output/`
 
-- runs the Playwright walkthrough
-- supports persona behavior floats
-- captures step artifacts
-- optionally captures screenshots
-- writes CSV output
-- returns per-session artifact bundles in the API path
+### Segment / LOB system
 
-### Heuristic layer
-
-`scripts/heuristic_review.py` and `scripts/heuristic_signals.py`:
-
-- score the observed flow against 5 heuristics
-- produce aggregate and per-session heuristic review output
-
-### Segment system
-
-`scripts/persona_segments.py` is the backend source of truth for:
-
-- segment presets
-- lever definitions
-- mapping levers into legacy behavior floats
-
-`frontend/src/segments.ts` mirrors this for fast first paint.
+- Backend source of truth: `scripts/persona_segments.py`
+- Frontend mirror: `frontend/src/segments.ts` + catalog from API
+- **LOB selector** exists in the UI (Expedia, Vrbo, Hotels.com, Partner Central)
+- First-run defaults: blank `start_url`, 1–2 traveler types, 1 try each
 
 ### Frontend
 
-`frontend/` is a real Vite + React app.
+Vite + React app with:
 
-It already supports:
+- prototype link + tasks + LOB / personas
+- heuristics + Synthetic TLX + screenshot toggles
+- async run progress, stop, optional local interactive auth
+- results dashboard, evidence gallery, study library
+- **Study share panel**: shares **setup only** (not results); teammate still needs a connected runner
+- truth banner when `/healthz` fails: UI-only messaging + CTA hard-disabled; `interactiveAuthAvailable` forced false (no “Chrome opens on this computer” on Pages/cloud)
 
-- task / URL form
-- segment profile selection
-- lever customization
-- heuristic toggle
-- screenshot toggle
-- run + validate actions
-- heuristic review tab
-- evidence tab
-- stress panel
+### Hosting
 
-### Results experience
-
-The run results tab has already been upgraded into a dashboard.
-
-It now includes:
-
-- run header
-- inline CSV download
-- hero summary
-- key metrics
-- key insights
-- by-segment summaries
-- run-path snapshots
-- warnings
-
-### Validation
-
-Local validation that passed:
-
-- Python compile checks
-- frontend build with `npm run build`
-- backend import with repo venv
+- Pages workflow deploys `frontend/dist`
+- API: Docker + Render Blueprint; wire via Actions variable `VITE_API_BASE` (see `HOSTING.md`)
 
 ## Important current truth
 
-This app is **aligned with the Glean synthetic walkthrough prompt in concept**, but **not yet aligned in contract**.
-
-The current app already has:
-
-- segment-driven behavior
-- lever tuning
-- heuristics
-- artifacts
-- results dashboard
-
-The current app does **not** yet fully have:
-
-- LOB-first architecture
-- the full segment library from the Glean prompt
-- prompt-aligned lever taxonomy and enums
-- `one_key_member` overlay support
-- DUET scoring
-- the full prompt-level JSON output contract
+- Conceptually aligned with the Glean synthetic walkthrough prompt; contract still has gaps (see `RESULTS_AND_SEGMENTS_MAPPING.md`).
+- LOB filtering and a larger segment library **do** exist now; some lever taxonomy / DUET / overlay gaps may remain.
+- Interactive Figma/GitHub sign-in needs a **local** backend with a display; cloud/headless reports `interactive_auth_available: false`.
 
 ## Best files to read first
 
-- `RESULTS_AND_SEGMENTS_MAPPING.md`
+- `HOSTING.md`
+- `README.md`
 - `app/main.py`
 - `frontend/src/App.tsx`
-- `frontend/src/components/SummaryCard.tsx`
-- `frontend/src/components/PersonaList.tsx`
-- `frontend/src/segments.ts`
-- `frontend/src/types.ts`
+- `frontend/src/defaultConfig.ts`
+- `frontend/src/components/ConfigForm.tsx`
+- `frontend/src/components/StudySharePanel.tsx`
 - `scripts/persona_segments.py`
 - `scripts/generic_usability_runner.py`
-- `scripts/heuristic_review.py`
+- `RESULTS_AND_SEGMENTS_MAPPING.md`
 
-## Current gaps relative to the Glean prompt
-
-Read `RESULTS_AND_SEGMENTS_MAPPING.md` for the full comparison.
-
-Highest-priority mismatches:
-
-1. no LOB selector
-2. current segment library is too small
-3. lever names and values do not fully match the Glean prompt
-4. runner still compresses levers into the legacy 4-float model
-5. no DUET layer yet
-6. no overlay support for `one_key_member`
-
-## Good next step
-
-The best next implementation step is:
-
-**Add LOB -> segment filtering -> prompt-aligned lever taxonomy without breaking the current dashboard or heuristic flow.**
-
-That means:
-
-- keep the existing backend and frontend
-- do not rebuild from scratch
-- preserve current results dashboard
-- preserve heuristic review
-- extend the segment system toward the Glean structure
-
-## Local run instructions
-
-### Backend
+## Local run
 
 ```bash
-cd /Users/kmann/Documents/Playground/simulated-usability-runner
+# backend
 source .venv/bin/activate
 uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
 
-### Frontend
-
-```bash
-cd /Users/kmann/Documents/Playground/simulated-usability-runner/frontend
-npm install
-npm run dev
-```
-
-If needed:
-
-```bash
-VITE_API_PROXY_TARGET=http://127.0.0.1:8000 npm run dev
+# frontend
+cd frontend && npm install && npm run dev
 ```
 
 ## Notes for Cursor
 
-- Do not start over.
-- Read the existing files first.
-- The frontend and backend are already working together.
-- The results dashboard already exists.
-- The Glean prompt comparison has already been analyzed in `RESULTS_AND_SEGMENTS_MAPPING.md`.
-- Prefer extending the existing structures over replacing them.
-
+- Do not start over; extend existing structures.
+- Prefer async `/runs` in UI docs and clients.
+- Never invent `VITE_API_BASE` or a fake Render hostname.
+- Keep user-facing copy plain (no em dashes); CTA string: **Open link & run test**.
