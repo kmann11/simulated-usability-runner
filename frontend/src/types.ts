@@ -339,6 +339,14 @@ export interface AuthSessionsStatus {
   github?: boolean;
 }
 
+export interface HealthSecurityInfo {
+  api_key_required?: boolean;
+  stress_enabled?: boolean;
+  max_request_bytes?: number;
+  runs_rate_limit?: string;
+  stress_rate_limit?: string;
+}
+
 export interface HealthResponse {
   status: string;
   timestamp: string;
@@ -347,6 +355,8 @@ export interface HealthResponse {
   headless?: boolean;
   /** Whether figma.session.json / github.session.json exist on the API host. */
   auth_sessions?: AuthSessionsStatus;
+  /** Abuse-control posture from the API (rate limits, stress gate, optional key). */
+  security?: HealthSecurityInfo;
 }
 
 export interface ApiError {

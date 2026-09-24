@@ -36,13 +36,29 @@ Then re-run **Actions → Deploy frontend to GitHub Pages**.
 5. Apply the Blueprint. When prompted for env vars:
    - **`OPENAI_API_KEY`** (optional): set your OpenAI key for GPT-backed decisions. Leave blank to use the local fallback policy.
    - **`USABILITY_MODEL`** (optional): e.g. `gpt-4o`.
-   - **`CORS_ORIGINS`** (optional): comma-separated extra origins if you need them.
+   - **`CORS_ORIGINS`** (optional): comma-separated **extra** browser origins (defaults already include local Vite ports and `https://kmann11.github.io`).
+   - **`RUNNER_API_KEY`** (optional): if set, mutating routes require header `X-Runner-Api-Key` (or `Authorization: Bearer …`). Leave unset for the public Pages demo.
+   - **`RUNNER_STRESS_ENABLED`** (optional): defaults to **off** when `USABILITY_HEADLESS=true`. Set `true` only on trusted/local hosts.
+   - Rate / body knobs (optional): `RUNNER_RUNS_RATE_LIMIT`, `RUNNER_RUNS_RATE_WINDOW_S`, `RUNNER_STRESS_RATE_LIMIT`, `RUNNER_STRESS_RATE_WINDOW_S`, `RUNNER_MAX_REQUEST_BYTES`.
    - `USABILITY_HEADLESS` is already `true` in the Blueprint — leave it.
 6. Wait for the first deploy. Open the service URL (HTTPS, typically `https://<name>.onrender.com`).
 7. Confirm `GET https://<your-service>.onrender.com/healthz` returns something like:
 
    ```json
-   {"status":"ok","timestamp":"...","interactive_auth_available":false,"headless":true,"auth_sessions":{"figma":false,"github":false}}
+   {
+     "status": "ok",
+     "timestamp": "...",
+     "interactive_auth_available": false,
+     "headless": true,
+     "auth_sessions": {"figma": false, "github": false},
+     "security": {
+       "api_key_required": false,
+       "stress_enabled": false,
+       "max_request_bytes": 262144,
+       "runs_rate_limit": "6/600s",
+       "stress_rate_limit": "2/600s"
+     }
+   }
    ```
 
 **Notes**
@@ -77,14 +93,47 @@ Then re-run **Actions → Deploy frontend to GitHub Pages**.
 
 Until `VITE_API_BASE` is set, the hosted UI calls `/api/...` on github.io, which cannot run the backend.
 
-## 3. Optional: Railway
+## 3. API abuse controls (public demo + internal EG)
+
+The Render API is reachable from the internet. Defaults favor a **public Pages demo** without a browser-visible secret:
+
+| Control | Default | Notes |
+| --- | --- | --- |
+| CORS | Localhost + `https://kmann11.github.io` (+ `CORS_ORIGINS`) | No wildcard `*.github.io` / `*.onrender.com` |
+| `POST /runs` + `POST /run` | 6 requests / 10 min / IP | Tunable via `RUNNER_RUNS_*` |
+| Request body | Max 256 KiB | `RUNNER_MAX_REQUEST_BYTES` |
+| `POST /stress` | **Disabled** when headless | Enable with `RUNNER_STRESS_ENABLED=true` (local/trusted only) |
+| Artifacts | Path must resolve under `output/` | Traversal returns 400 |
+| `RUNNER_API_KEY` | Unset | If set, mutating routes need `X-Runner-Api-Key` |
+
+### Optional API key (internal only — leaky in Pages)
+
+`RUNNER_API_KEY` on the API + matching `VITE_RUNNER_API_KEY` in the UI build will send `X-Runner-Api-Key` from the browser.
+
+**HOSTING WARNING:** any `VITE_*` value is public in the JS bundle. Anyone can copy it and call `/runs`. Prefer:
+
+1. Leave the key **unset** for the public GitHub Pages demo (rate limit + disabled `/stress` + tight CORS).
+2. For internal EG demos, either run the UI locally against a keyed API, or accept that a shared browser key is only a soft gate.
+
+```bash
+# API (Render env)
+RUNNER_API_KEY="choose-a-long-random-string"
+
+# Local UI or internal Pages build (optional, leaky if published)
+VITE_RUNNER_API_KEY="choose-a-long-random-string"
+```
+
+Job status polling (`GET /runs/{id}`) stays open so a keyed UI can still poll without extra complexity; create/cancel/auth require the key when configured.
+
+## 4. Optional: Railway
 
 This repo also includes `railway.json` and a `Procfile`. Prefer the Dockerfile on Railway, set `OPENAI_API_KEY` / `USABILITY_HEADLESS=true`, then use the Railway HTTPS URL as `VITE_API_BASE` the same way.
 
-## 4. Local Docker smoke test
+## 5. Local Docker smoke test
 
 ```bash
 docker build -t sur-api .
 docker run --rm -p 8000:8000 -e OPENAI_API_KEY -e USABILITY_HEADLESS=true sur-api
 curl -s http://localhost:8000/healthz
+# Expect security.stress_enabled=false and api_key_required=false
 ```

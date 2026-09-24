@@ -4,22 +4,24 @@ import asyncio
 import copy
 import csv
 import datetime as dt
+import hmac
 import os
 import sys
 import threading
 import time
 import uuid
-from collections import Counter
+from collections import Counter, defaultdict, deque
 from pathlib import Path
 from statistics import mean
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import Literal, Optional
+from starlette.middleware.base import BaseHTTPMiddleware
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 if str(WORKSPACE_ROOT) not in sys.path:
@@ -49,6 +51,39 @@ RUN_JOBS: dict[str, dict[str, Any]] = {}
 AUTH_RESUME_LOCK = threading.Lock()
 AUTH_RESUME_EVENTS: dict[str, threading.Event] = {}
 
+# --- Abuse controls (env-tunable; safe defaults for a public demo API) ---
+# Optional shared key. Prefer leaving unset for the public Pages demo and
+# relying on rate limits + stress disable. If set, mutating/expensive routes
+# require header X-Runner-Api-Key (or Authorization: Bearer …).
+# WARNING: baking this into VITE_* exposes it to anyone who loads the UI.
+RUNNER_API_KEY = os.getenv("RUNNER_API_KEY", "").strip()
+# Max JSON body size for POST/PUT/PATCH (default 256 KiB).
+MAX_REQUEST_BYTES = int(os.getenv("RUNNER_MAX_REQUEST_BYTES", str(256 * 1024)))
+# Sliding-window rate limits (per client IP).
+RUNS_RATE_LIMIT = int(os.getenv("RUNNER_RUNS_RATE_LIMIT", "6"))
+RUNS_RATE_WINDOW_S = int(os.getenv("RUNNER_RUNS_RATE_WINDOW_S", "600"))
+STRESS_RATE_LIMIT = int(os.getenv("RUNNER_STRESS_RATE_LIMIT", "2"))
+STRESS_RATE_WINDOW_S = int(os.getenv("RUNNER_STRESS_RATE_WINDOW_S", "600"))
+# Stress burns CPU/RAM. Default off when headless (typical cloud deploy).
+# Set RUNNER_STRESS_ENABLED=true to allow locally or on a protected host.
+_HEADLESS_DEFAULT = os.getenv("USABILITY_HEADLESS", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+_STRESS_ENV = os.getenv("RUNNER_STRESS_ENABLED", "").strip().lower()
+if _STRESS_ENV in {"1", "true", "yes", "on"}:
+    STRESS_ENABLED = True
+elif _STRESS_ENV in {"0", "false", "no", "off"}:
+    STRESS_ENABLED = False
+else:
+    STRESS_ENABLED = not _HEADLESS_DEFAULT
+
+# Routes that cost browser/CPU time or mutate job state are gated below via
+# Depends(require_api_key_if_configured) / require_runs_rate_limit /
+# require_stress_access. GET /healthz, personas, artifacts, and job poll stay open.
+
 app = FastAPI(
     title="AI Usability Research App",
     version="0.1.0",
@@ -57,31 +92,171 @@ app = FastAPI(
 
 
 def _cors_allow_origins() -> list[str]:
-    """Extra exact origins from CORS_ORIGINS (comma-separated)."""
+    """Exact origins allowed for browser CORS.
+
+    Defaults: local Vite + this repo's GitHub Pages origin.
+    Add more via CORS_ORIGINS (comma-separated). Broad wildcards for every
+    github.io / onrender host are intentionally not used.
+    """
+    defaults = [
+        "http://localhost:5273",
+        "http://127.0.0.1:5273",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://kmann11.github.io",
+    ]
     raw = os.getenv("CORS_ORIGINS", "").strip()
-    if not raw:
-        return []
-    return [part.strip() for part in raw.split(",") if part.strip()]
+    extras = [part.strip() for part in raw.split(",") if part.strip()] if raw else []
+    # Preserve order, drop empties/dupes.
+    seen: set[str] = set()
+    origins: list[str] = []
+    for origin in defaults + extras:
+        if origin not in seen:
+            seen.add(origin)
+            origins.append(origin)
+    return origins
 
 
-# Local Vite + GitHub Pages + common Render/Railway public hosts.
-# Extra origins: set CORS_ORIGINS=https://example.com,https://other.example
-_CORS_ORIGIN_REGEX = (
-    r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
-    r"|https://[\w-]+\.github\.io$"
-    r"|https://[\w-]+\.onrender\.com$"
-    r"|https://[\w-]+\.up\.railway\.app$"
-    r"|https://[\w-]+\.railway\.app$"
-)
+# Localhost any port (Vite may pick an alternate). Exact Pages/prod origins
+# come from allow_origins above / CORS_ORIGINS — not a public *.github.io regex.
+_CORS_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_allow_origins(),
     allow_origin_regex=_CORS_ORIGIN_REGEX,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Accept", "Authorization", "X-Runner-Api-Key"],
 )
+
+
+class _BodySizeLimitMiddleware(BaseHTTPMiddleware):
+    """Reject oversized request bodies early (Content-Length check)."""
+
+    async def dispatch(self, request: Request, call_next: Callable):
+        if request.method in {"POST", "PUT", "PATCH"}:
+            raw_len = request.headers.get("content-length")
+            if raw_len is not None:
+                try:
+                    length = int(raw_len)
+                except ValueError:
+                    return JSONResponse(
+                        status_code=400,
+                        content={"detail": "Invalid Content-Length header."},
+                    )
+                if length > MAX_REQUEST_BYTES:
+                    return JSONResponse(
+                        status_code=413,
+                        content={
+                            "detail": (
+                                f"Request body too large "
+                                f"(max {MAX_REQUEST_BYTES} bytes)."
+                            )
+                        },
+                    )
+        return await call_next(request)
+
+
+app.add_middleware(_BodySizeLimitMiddleware)
+
+
+class _SlidingWindowLimiter:
+    """In-process per-key sliding window. Fine for a single Render instance."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._hits: dict[str, deque[float]] = defaultdict(deque)
+
+    def check(self, key: str, limit: int, window_s: int) -> tuple[bool, int]:
+        """Return (allowed, retry_after_seconds)."""
+        now = time.monotonic()
+        cutoff = now - window_s
+        with self._lock:
+            bucket = self._hits[key]
+            while bucket and bucket[0] < cutoff:
+                bucket.popleft()
+            if len(bucket) >= limit:
+                retry_after = max(1, int(window_s - (now - bucket[0])) + 1)
+                return False, retry_after
+            bucket.append(now)
+            return True, 0
+
+
+_RATE_LIMITER = _SlidingWindowLimiter()
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    if forwarded:
+        return forwarded
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _extract_api_key(request: Request) -> str:
+    header_key = request.headers.get("x-runner-api-key", "").strip()
+    if header_key:
+        return header_key
+    auth = request.headers.get("authorization", "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return ""
+
+
+def require_api_key_if_configured(request: Request) -> None:
+    """If RUNNER_API_KEY is set, require it (attach only to protected routes)."""
+    if not RUNNER_API_KEY:
+        return
+    provided = _extract_api_key(request)
+    if not provided or not hmac.compare_digest(provided, RUNNER_API_KEY):
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Missing or invalid API key. Set header X-Runner-Api-Key "
+                "(or Authorization: Bearer …) to match RUNNER_API_KEY."
+            ),
+        )
+
+
+def _enforce_rate_limit(request: Request, bucket: str, limit: int, window_s: int) -> None:
+    ip = _client_ip(request)
+    allowed, retry_after = _RATE_LIMITER.check(f"{bucket}:{ip}", limit, window_s)
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Rate limit exceeded for {bucket} "
+                f"({limit} per {window_s}s). Retry in ~{retry_after}s."
+            ),
+            headers={"Retry-After": str(retry_after)},
+        )
+
+
+def require_runs_rate_limit(request: Request) -> None:
+    _enforce_rate_limit(request, "runs", RUNS_RATE_LIMIT, RUNS_RATE_WINDOW_S)
+
+
+def require_stress_access(request: Request) -> None:
+    if not STRESS_ENABLED:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "POST /stress is disabled on this host "
+                "(set RUNNER_STRESS_ENABLED=true to allow)."
+            ),
+        )
+    # Stress always requires the API key when one is configured, and uses a
+    # tighter rate limit even when the key is absent (local/dev).
+    if RUNNER_API_KEY:
+        provided = _extract_api_key(request)
+        if not provided or not hmac.compare_digest(provided, RUNNER_API_KEY):
+            raise HTTPException(
+                status_code=401,
+                detail="POST /stress requires X-Runner-Api-Key when RUNNER_API_KEY is set.",
+            )
+    _enforce_rate_limit(request, "stress", STRESS_RATE_LIMIT, STRESS_RATE_WINDOW_S)
 
 
 Severity = Literal["low", "medium", "high"]
@@ -906,6 +1081,13 @@ def healthz() -> dict[str, Any]:
         "interactive_auth_available": auth_ok,
         "headless": _env_truthy("USABILITY_HEADLESS") or not auth_ok,
         "auth_sessions": auth_session_files_status(),
+        "security": {
+            "api_key_required": bool(RUNNER_API_KEY),
+            "stress_enabled": STRESS_ENABLED,
+            "max_request_bytes": MAX_REQUEST_BYTES,
+            "runs_rate_limit": f"{RUNS_RATE_LIMIT}/{RUNS_RATE_WINDOW_S}s",
+            "stress_rate_limit": f"{STRESS_RATE_LIMIT}/{STRESS_RATE_WINDOW_S}s",
+        },
     }
 
 
@@ -965,7 +1147,10 @@ def list_segments(lob: Optional[str] = None) -> list[SegmentPreset]:
     ]
 
 
-@app.post("/validate")
+@app.post(
+    "/validate",
+    dependencies=[Depends(require_api_key_if_configured)],
+)
 def validate(payload: ConfigPayload) -> dict[str, Any]:
     config = build_config(payload.config)
     errors, warnings = validate_config(config)
@@ -982,7 +1167,10 @@ def validate(payload: ConfigPayload) -> dict[str, Any]:
     }
 
 
-@app.post("/runs")
+@app.post(
+    "/runs",
+    dependencies=[Depends(require_api_key_if_configured), Depends(require_runs_rate_limit)],
+)
 def create_run(payload: ConfigPayload) -> dict[str, Any]:
     config = build_config(payload.config)
     errors, warnings = validate_config(config)
@@ -1050,7 +1238,10 @@ def get_run(job_id: str) -> dict[str, Any]:
         return _public_job(job)
 
 
-@app.post("/runs/{job_id}/cancel")
+@app.post(
+    "/runs/{job_id}/cancel",
+    dependencies=[Depends(require_api_key_if_configured)],
+)
 def cancel_run(job_id: str) -> dict[str, Any]:
     with RUN_JOBS_LOCK:
         job = RUN_JOBS.get(job_id)
@@ -1074,7 +1265,10 @@ def cancel_run(job_id: str) -> dict[str, Any]:
         return _public_job(job)
 
 
-@app.post("/runs/{job_id}/auth-complete")
+@app.post(
+    "/runs/{job_id}/auth-complete",
+    dependencies=[Depends(require_api_key_if_configured)],
+)
 def complete_run_auth(job_id: str) -> dict[str, Any]:
     with AUTH_RESUME_LOCK:
         resume_event = AUTH_RESUME_EVENTS.get(job_id)
@@ -1099,7 +1293,10 @@ def complete_run_auth(job_id: str) -> dict[str, Any]:
         return _public_job(job)
 
 
-@app.post("/run")
+@app.post(
+    "/run",
+    dependencies=[Depends(require_api_key_if_configured), Depends(require_runs_rate_limit)],
+)
 def run(payload: ConfigPayload) -> dict[str, Any]:
     config = build_config(payload.config)
     errors, warnings = validate_config(config)
@@ -1122,7 +1319,10 @@ def run(payload: ConfigPayload) -> dict[str, Any]:
     )
 
 
-@app.post("/heuristics/review")
+@app.post(
+    "/heuristics/review",
+    dependencies=[Depends(require_api_key_if_configured)],
+)
 def heuristics_review(payload: HeuristicReviewPayload) -> FlowHeuristicReview:
     """Score (or re-score) a flow from raw step artifacts.
 
@@ -1155,7 +1355,10 @@ def heuristics_review(payload: HeuristicReviewPayload) -> FlowHeuristicReview:
     return FlowHeuristicReview.model_validate(review_flow(sessions))
 
 
-@app.post("/tlx/review")
+@app.post(
+    "/tlx/review",
+    dependencies=[Depends(require_api_key_if_configured)],
+)
 def tlx_review(payload: TlxReviewPayload) -> FlowTlxReview:
     """Score Synthetic TLX from raw step artifacts without re-running Playwright."""
     if not payload.raw_sessions:
@@ -1208,7 +1411,10 @@ def artifact(path: str) -> FileResponse:
     return FileResponse(str(candidate))
 
 
-@app.post("/stress")
+@app.post(
+    "/stress",
+    dependencies=[Depends(require_stress_access)],
+)
 def stress(payload: StressPayload) -> dict[str, Any]:
     with RUN_LOCK:
         raw_path, summary_path = asyncio.run(

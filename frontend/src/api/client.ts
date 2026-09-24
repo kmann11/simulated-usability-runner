@@ -15,10 +15,28 @@ import type {
 const RAW_BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.trim();
 const API_BASE = RAW_BASE && RAW_BASE.length > 0 ? RAW_BASE.replace(/\/$/, "") : "/api";
 
+/**
+ * Optional shared key for internal deployments where the API sets RUNNER_API_KEY.
+ * WARNING: any VITE_* value is visible in the browser bundle. Do not bake a
+ * production secret into Pages — leave unset for the public demo (rate limits
+ * + disabled /stress protect the Render host instead).
+ */
+const RUNNER_API_KEY = (import.meta.env.VITE_RUNNER_API_KEY as string | undefined)?.trim() || "";
+
+function authHeaders(): Record<string, string> {
+  if (!RUNNER_API_KEY) return {};
+  return { "X-Runner-Api-Key": RUNNER_API_KEY };
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
     ...init,
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      ...authHeaders(),
+      ...(init?.headers ?? {}),
+    },
   });
 
   const text = await response.text();

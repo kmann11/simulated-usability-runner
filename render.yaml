@@ -21,6 +21,13 @@ services:
       # Optional model override (default gpt-4o in the runner).
       - key: USABILITY_MODEL
         sync: false
-      # Optional comma-separated extra CORS origins (e.g. a custom Pages URL).
+      # Optional comma-separated extra CORS origins (defaults include kmann11.github.io).
       - key: CORS_ORIGINS
+        sync: false
+      # Optional shared key for mutating routes. Leave unset for public Pages demo.
+      # Do NOT bake the same value into a public VITE_ build unless you accept exposure.
+      - key: RUNNER_API_KEY
+        sync: false
+      # Stress burns CPU/RAM; default off under USABILITY_HEADLESS=true.
+      - key: RUNNER_STRESS_ENABLED
         sync: false

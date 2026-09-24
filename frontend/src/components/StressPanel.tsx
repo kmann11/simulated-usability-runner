@@ -33,7 +33,8 @@ export function StressPanel() {
         <h3>Local stress benchmark</h3>
         <p className="muted">
           Runs the bundled HTML fixtures end-to-end. Useful for confirming the runner is healthy
-          without hitting a live site.
+          without hitting a live site. Cloud hosts usually disable this endpoint
+          (<code>RUNNER_STRESS_ENABLED</code>); use a local API for stress checks.
         </p>
       </header>
 
