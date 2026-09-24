@@ -334,12 +334,19 @@ export interface StressResponse {
   fixtures: StressFixtureRow[];
 }
 
+export interface AuthSessionsStatus {
+  figma?: boolean;
+  github?: boolean;
+}
+
 export interface HealthResponse {
   status: string;
   timestamp: string;
   /** False on cloud/headless backends where headed Chrome cannot open. */
   interactive_auth_available?: boolean;
   headless?: boolean;
+  /** Whether figma.session.json / github.session.json exist on the API host. */
+  auth_sessions?: AuthSessionsStatus;
 }
 
 export interface ApiError {

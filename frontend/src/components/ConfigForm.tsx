@@ -9,10 +9,16 @@ import {
   PROTOTYPE_SOURCE_LABEL,
 } from "../prototypeSource";
 import { buildRunPlanCopy, formatLinkLabel, isValidPrototypeUrl } from "../linkPreview";
-import { LOCAL_AUTH_ONLY_CALLOUT, signInCopyForUrl } from "../prototypeAuth";
+import {
+  getAuthProvider,
+  hasSavedSession,
+  LOCAL_AUTH_ONLY_CALLOUT,
+  signInCopyForUrl,
+} from "../prototypeAuth";
+import { SAMPLE_RUN_BLURB } from "../sampleRun";
 import { deriveBehaviorFloats } from "../segments";
 import { isPlaceholderStudyName, suggestStudyName } from "../studyNaming";
-import type { ExperimentConfig, Lob } from "../types";
+import type { AuthSessionsStatus, ExperimentConfig, Lob } from "../types";
 import { PersonaList } from "./PersonaList";
 import { StringListEditor } from "./StringListEditor";
 import { TaskEditor } from "./TaskEditor";
@@ -30,6 +36,8 @@ export interface RunOptionsState {
   sign_in_before_run?: boolean;
   /** @deprecated Use sign_in_before_run */
   figma_sign_in?: boolean;
+  /** When true, ignore a saved session file and open Chrome again. */
+  force_reauth?: boolean;
 }
 
 interface ConfigFormProps {
@@ -40,6 +48,11 @@ interface ConfigFormProps {
   disabled?: boolean;
   /** From /healthz; false on cloud/headless backends. */
   interactiveAuthAvailable?: boolean;
+  /** From /healthz; whether saved provider session files exist on the API host. */
+  authSessions?: AuthSessionsStatus | null;
+  /** When API is healthy and the form is empty, offer a one-click sample. */
+  showSampleCta?: boolean;
+  onLoadSample?: () => void;
 }
 
 export function ConfigForm({
@@ -49,6 +62,9 @@ export function ConfigForm({
   onOptionsChange,
   disabled,
   interactiveAuthAvailable = false,
+  authSessions = null,
+  showSampleCta = false,
+  onLoadSample,
 }: ConfigFormProps) {
   const { lobs, segments } = useCatalog();
   const studyNameTouchedRef = useRef(false);
@@ -57,7 +73,12 @@ export function ConfigForm({
     [config.start_url],
   );
   const signInCopy = useMemo(() => signInCopyForUrl(config.start_url), [config.start_url]);
+  const authProvider = useMemo(() => getAuthProvider(config.start_url), [config.start_url]);
+  const savedSession = hasSavedSession(authProvider, authSessions);
   const skipSignIn = options.sign_in_before_run === false || options.figma_sign_in === false;
+  const successUrlCount = config.success_criteria.url_contains.filter((v) => v.trim()).length;
+  const successTextCount = config.success_criteria.text_contains.filter((v) => v.trim()).length;
+  const hasSuccessCriteria = successUrlCount + successTextCount > 0;
 
   const update = <K extends keyof ExperimentConfig>(key: K, value: ExperimentConfig[K]) => {
     onChange({ ...config, [key]: value });
@@ -71,6 +92,17 @@ export function ConfigForm({
       ...options,
       sign_in_before_run: !skip,
       figma_sign_in: !skip,
+      force_reauth: skip ? false : options.force_reauth,
+    });
+  };
+
+  const setForceReauth = (force: boolean) => {
+    onOptionsChange({
+      ...options,
+      force_reauth: force,
+      // Signing in again implies we are not on the public-link skip path.
+      sign_in_before_run: force ? true : options.sign_in_before_run,
+      figma_sign_in: force ? true : options.figma_sign_in,
     });
   };
 
@@ -123,6 +155,21 @@ export function ConfigForm({
             <strong>Run</strong>. We open that link and show where people got stuck.
           </li>
         </ol>
+        {showSampleCta && onLoadSample && (
+          <div className="sample-run-cta" role="region" aria-label="Sample run">
+            <p className="sample-run-lead">
+              <strong>First time here?</strong> {SAMPLE_RUN_BLURB}
+            </p>
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={onLoadSample}
+              disabled={disabled}
+            >
+              Try a sample public page
+            </button>
+          </div>
+        )}
       </section>
 
       <section className="step step-hero">
@@ -176,10 +223,32 @@ export function ConfigForm({
                 <p>
                   <strong>Local sign-in unavailable.</strong> {LOCAL_AUTH_ONLY_CALLOUT}
                 </p>
+              ) : savedSession && !options.force_reauth && !skipSignIn ? (
+                <p>
+                  <strong>Saved {signInCopy.providerLabel} sign-in found.</strong> We will reuse
+                  the session on this runner and skip the Chrome login popup. Choose Sign in again
+                  if your login expired.
+                </p>
               ) : (
                 <p>
                   <strong>{signInCopy.calloutTitle}</strong>. {signInCopy.calloutBody}
                 </p>
+              )}
+              {interactiveAuthAvailable && savedSession && !skipSignIn && (
+                <label className="toggle-row skip-sign-in-toggle">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(options.force_reauth)}
+                    onChange={(event) => setForceReauth(event.target.checked)}
+                  />
+                  <span className="toggle-text">
+                    <strong>Sign in again</strong>
+                    <small>
+                      Opens Chrome for a fresh {signInCopy.providerLabel} login and replaces the
+                      saved session.
+                    </small>
+                  </span>
+                </label>
               )}
               <label className="toggle-row skip-sign-in-toggle">
                 <input
@@ -193,7 +262,9 @@ export function ConfigForm({
                   <small>
                     {!interactiveAuthAvailable
                       ? "Required here: desktop Chrome login is not available. Use a public Figma/GitHub link."
-                      : "Use when the Figma/GitHub page is already public and does not need a login window."}
+                      : savedSession
+                        ? "Ignore the saved session and treat the link as public (no login cookies)."
+                        : "Use when the Figma/GitHub page is already public and does not need a login window."}
                   </small>
                 </span>
               </label>
@@ -252,6 +323,41 @@ export function ConfigForm({
             update("tasks", tasks);
           }}
         />
+
+        <div className="success-criteria-helper" role="note">
+          <p className="success-criteria-helper-title">
+            How do we know they finished?
+          </p>
+          <p className="muted small">
+            {hasSuccessCriteria ? (
+              <>
+                We treat the task as done when the page address contains{" "}
+                {successUrlCount > 0 ? (
+                  <strong>
+                    {config.success_criteria.url_contains.filter((v) => v.trim()).join(", ")}
+                  </strong>
+                ) : (
+                  "…"
+                )}
+                {successTextCount > 0 && (
+                  <>
+                    {" "}
+                    or the page shows{" "}
+                    <strong>
+                      {config.success_criteria.text_contains.filter((v) => v.trim()).join(", ")}
+                    </strong>
+                  </>
+                )}
+                . Edit these under More options if your finish screen looks different.
+              </>
+            ) : (
+              <>
+                No finish signals yet. Add URL fragments or on-page words under More options so
+                completion is easier to interpret.
+              </>
+            )}
+          </p>
+        </div>
       </section>
 
       <section className="step step-compact">

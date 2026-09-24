@@ -42,14 +42,15 @@ Then re-run **Actions → Deploy frontend to GitHub Pages**.
 7. Confirm `GET https://<your-service>.onrender.com/healthz` returns something like:
 
    ```json
-   {"status":"ok","timestamp":"...","interactive_auth_available":false,"headless":true}
+   {"status":"ok","timestamp":"...","interactive_auth_available":false,"headless":true,"auth_sessions":{"figma":false,"github":false}}
    ```
 
 **Notes**
 
-- Free web services sleep after idle time; the first request after sleep can take ~30–60s.
+- Free web services sleep after idle time; the first request after sleep can take ~30–60s. The hosted UI shows **Waking the runner…** and retries `/healthz` on a short poll (not only “Can’t reach”).
 - Chromium is memory-heavy. If runs crash or the service restarts under load, upgrade the plan to **Starter** in the Render dashboard.
-- Figma / GitHub interactive login popups do **not** work on cloud (`USABILITY_HEADLESS=true`, no display). Use a public link, pre-warmed `storage_state` from a local machine, or run the API locally for authenticated flows. The UI shows a “Sign-in windows only work with a local backend” callout when `/healthz` reports interactive auth unavailable.
+- Figma / GitHub interactive login popups do **not** work on cloud (`USABILITY_HEADLESS=true`, no display). Use a public link, pre-warmed `storage_state` from a local machine (`output/sessions/figma.session.json` or `github.session.json`), or run the API locally for authenticated flows. `/healthz` reports `auth_sessions` so the UI can reuse a saved session and skip the login popup. The UI shows a “Sign-in windows only work with a local backend” callout when interactive auth is unavailable.
+- First-run tip on Pages: when the API is healthy and the form is empty, **Try a sample public page** loads Playwright’s public TodoMVC demo (no login) so designers can see a full walkthrough without pasting a prototype yet.
 
 ### Manual Docker service (no Blueprint)
 

@@ -1,5 +1,5 @@
 import { guessPrototypeSource } from "./prototypeSource";
-import type { ExperimentConfig } from "./types";
+import type { AuthSessionsStatus, ExperimentConfig } from "./types";
 import type { RunOptionsState } from "./components/ConfigForm";
 
 export type AuthProvider = "figma" | "github";
@@ -22,41 +22,90 @@ export function getAuthProvider(url: string): AuthProvider | null {
   return null;
 }
 
+export function hasSavedSession(
+  provider: AuthProvider | null,
+  sessions?: AuthSessionsStatus | null,
+): boolean {
+  if (!provider || !sessions) return false;
+  return sessions[provider] === true;
+}
+
 export function needsInteractiveSignIn(
   url: string,
   options: RunOptionsState,
   interactiveAuthAvailable = false,
+  sessions?: AuthSessionsStatus | null,
 ): boolean {
   if (!getAuthProvider(url)) return false;
   if (!interactiveAuthAvailable) return false;
   if (options.sign_in_before_run === false) return false;
   // Legacy option kept for shared study links.
   if (options.figma_sign_in === false) return false;
+  // Prefer saved session over opening a Chrome popup, unless user asks to sign in again.
+  if (hasSavedSession(getAuthProvider(url), sessions) && !options.force_reauth) {
+    return false;
+  }
   return true;
 }
 
+/**
+ * Build the config sent to the API.
+ * - Interactive auth: open headed Chrome, then save storage_state.
+ * - Saved session: reuse storage_state without a popup.
+ * - Skip / public: no browser auth fields.
+ */
 export function configForRun(
   config: ExperimentConfig,
   options: RunOptionsState,
   interactiveAuthAvailable = false,
+  sessions?: AuthSessionsStatus | null,
 ): ExperimentConfig {
   const provider = getAuthProvider(config.start_url);
-  if (
-    !provider ||
-    !needsInteractiveSignIn(config.start_url, options, interactiveAuthAvailable)
-  ) {
-    return config;
+  if (!provider) return config;
+
+  const skipAuth =
+    options.sign_in_before_run === false || options.figma_sign_in === false;
+  if (skipAuth) return config;
+
+  const saved = hasSavedSession(provider, sessions);
+  const interactive = needsInteractiveSignIn(
+    config.start_url,
+    options,
+    interactiveAuthAvailable,
+    sessions,
+  );
+
+  if (!interactive && !saved) {
+    // Cloud / no session and user did not skip: still attach path so a local
+    // interactive run can create the file; cloud will ignore interactive_auth.
+    if (!interactiveAuthAvailable) return config;
   }
 
-  return {
-    ...config,
-    browser: {
-      interactive_auth: true,
-      storage_state_path: SESSION_PATHS[provider],
-      use_stealth: false,
-      headless: true,
-    },
-  };
+  if (interactive) {
+    return {
+      ...config,
+      browser: {
+        interactive_auth: true,
+        storage_state_path: SESSION_PATHS[provider],
+        use_stealth: false,
+        headless: true,
+      },
+    };
+  }
+
+  if (saved) {
+    return {
+      ...config,
+      browser: {
+        interactive_auth: false,
+        storage_state_path: SESSION_PATHS[provider],
+        use_stealth: false,
+        headless: true,
+      },
+    };
+  }
+
+  return config;
 }
 
 export interface SignInCopy {
@@ -123,9 +172,10 @@ export function shouldUseFigmaSignIn(
   url: string,
   options: RunOptionsState,
   interactiveAuthAvailable = false,
+  sessions?: AuthSessionsStatus | null,
 ): boolean {
   return (
     getAuthProvider(url) === "figma" &&
-    needsInteractiveSignIn(url, options, interactiveAuthAvailable)
+    needsInteractiveSignIn(url, options, interactiveAuthAvailable, sessions)
   );
 }

@@ -762,6 +762,21 @@ def interactive_auth_available() -> bool:
     return True
 
 
+# Paths must stay in sync with frontend/src/prototypeAuth.ts SESSION_PATHS.
+_AUTH_SESSION_FILES: dict[str, Path] = {
+    "figma": WORKSPACE_ROOT / "output" / "sessions" / "figma.session.json",
+    "github": WORKSPACE_ROOT / "output" / "sessions" / "github.session.json",
+}
+
+
+def auth_session_files_status() -> dict[str, bool]:
+    """Whether a saved Playwright storage_state exists per provider."""
+    return {
+        provider: path.is_file()
+        for provider, path in _AUTH_SESSION_FILES.items()
+    }
+
+
 def build_config(override: dict[str, Any]) -> dict[str, Any]:
     config = copy.deepcopy(DEFAULT_GENERIC_CONFIG)
     recursive_merge(config, override)
@@ -890,6 +905,7 @@ def healthz() -> dict[str, Any]:
         "timestamp": dt.datetime.now().isoformat(),
         "interactive_auth_available": auth_ok,
         "headless": _env_truthy("USABILITY_HEADLESS") or not auth_ok,
+        "auth_sessions": auth_session_files_status(),
     }
 
 

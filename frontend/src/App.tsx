@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, describeError } from "./api/client";
 import { ConfigForm, type RunOptionsState } from "./components/ConfigForm";
 import { EvidenceGallery } from "./components/EvidenceGallery";
+import { FindingsExportPanel } from "./components/FindingsExportPanel";
 import { HealthBadge } from "./components/HealthBadge";
 import { HeuristicScorecard } from "./components/HeuristicScorecard";
 import { MessageList } from "./components/MessageList";
@@ -13,10 +14,18 @@ import { TlxScorecard } from "./components/TlxScorecard";
 import { DEFAULT_CONFIG } from "./defaultConfig";
 import { StudyDesignQa } from "./components/StudyDesignQa";
 import { clearShareFromLocation, readShareFromLocation, type SharedStudySetup } from "./studyShare";
-import { configForRun, HOSTING_DOCS_URL, signInCopyForUrl } from "./prototypeAuth";
+import { configForRun, getAuthProvider, hasSavedSession, HOSTING_DOCS_URL, signInCopyForUrl } from "./prototypeAuth";
 import { isValidPrototypeUrl } from "./linkPreview";
+import { buildSampleConfig, SAMPLE_RUN_BLURB } from "./sampleRun";
 import { EMPTY_STUDY_METADATA, type SavedStudy, type StudyMetadata } from "./studyLibrary";
-import type { ExperimentConfig, HealthResponse, RunJobStatus, RunResponse, ValidateResponse } from "./types";
+import type {
+  AuthSessionsStatus,
+  ExperimentConfig,
+  HealthResponse,
+  RunJobStatus,
+  RunResponse,
+  ValidateResponse,
+} from "./types";
 
 type ResultTab = "run" | "heuristics" | "tlx" | "evidence";
 type NoticeState = {
@@ -34,7 +43,11 @@ const DEFAULT_RUN_OPTIONS: RunOptionsState = {
   // Pessimistic until /healthz confirms a local interactive backend.
   figma_sign_in: false,
   sign_in_before_run: false,
+  force_reauth: false,
 };
+
+const CREDIBILITY_COPY =
+  "This is an automated simulation, not human usability research. Synthetic TLX is a directional workload forecast, not a human NASA TLX questionnaire.";
 
 export default function App() {
   const [config, setConfig] = useState<ExperimentConfig>(DEFAULT_CONFIG);
@@ -52,25 +65,30 @@ export default function App() {
   const [stoppingRun, setStoppingRun] = useState(false);
   // Never default true: Pages/cloud must not promise desktop Chrome until health says so.
   const [interactiveAuthAvailable, setInteractiveAuthAvailable] = useState(false);
+  const [authSessions, setAuthSessions] = useState<AuthSessionsStatus | null>(null);
   const [apiReachable, setApiReachable] = useState<ApiReachable>(null);
   const loadingRef = useRef<HTMLDivElement | null>(null);
   const resultsRef = useRef<HTMLDivElement | null>(null);
 
   const busy = checking || running;
   const apiDown = apiReachable === false;
-  const canRun = apiReachable === true && !busy;
+  const apiHealthy = apiReachable === true;
+  const canRun = apiHealthy && !busy;
   const review = result?.heuristic_review ?? null;
   const tlxReview = result?.tlx_review ?? null;
   const hasPrototypeUrl = Boolean(config.start_url.trim()) && isValidPrototypeUrl(config.start_url);
+  const showSampleCta = apiHealthy && !hasPrototypeUrl && !busy && !result;
 
   const handleHealth = useCallback((health: HealthResponse | null) => {
     if (!health) {
       setApiReachable(false);
       setInteractiveAuthAvailable(false);
+      setAuthSessions(null);
       return;
     }
     setApiReachable(true);
     setInteractiveAuthAvailable(health.interactive_auth_available !== false);
+    setAuthSessions(health.auth_sessions ?? null);
   }, []);
 
   useEffect(() => {
@@ -80,8 +98,30 @@ export default function App() {
       ...current,
       sign_in_before_run: false,
       figma_sign_in: false,
+      force_reauth: false,
     }));
   }, [interactiveAuthAvailable, options.sign_in_before_run]);
+
+  // When a saved provider session exists on the API host, prefer reusing it
+  // (storage_state, no Chrome popup) unless the user already chose skip or reauth.
+  useEffect(() => {
+    if (!interactiveAuthAvailable) return;
+    const provider = getAuthProvider(config.start_url);
+    if (!hasSavedSession(provider, authSessions)) return;
+    setOptions((current) => {
+      if (current.sign_in_before_run === false || current.figma_sign_in === false) {
+        return current;
+      }
+      if (current.force_reauth) return current;
+      if (current.sign_in_before_run === true) return current;
+      return {
+        ...current,
+        sign_in_before_run: true,
+        figma_sign_in: true,
+        force_reauth: false,
+      };
+    });
+  }, [interactiveAuthAvailable, authSessions, config.start_url]);
 
   const applySharedSetup = (setup: SharedStudySetup, sourceLabel: string) => {
     const wantSignIn = setup.options.sign_in_before_run ?? setup.options.figma_sign_in ?? false;
@@ -93,6 +133,7 @@ export default function App() {
       capture_screenshots: setup.options.capture_screenshots,
       sign_in_before_run: signIn,
       figma_sign_in: signIn,
+      force_reauth: setup.options.force_reauth ?? false,
     });
     setStudyMetadata(setup.metadata);
     setCheck(null);
@@ -207,6 +248,7 @@ export default function App() {
       // Keep sign-in off unless health already confirmed interactive auth.
       figma_sign_in: interactiveAuthAvailable,
       sign_in_before_run: interactiveAuthAvailable,
+      force_reauth: false,
     });
     setCheck(null);
     setResult(null);
@@ -219,6 +261,31 @@ export default function App() {
     setStudyMetadata(EMPTY_STUDY_METADATA);
   };
 
+  const handleLoadSample = () => {
+    setConfig(buildSampleConfig(DEFAULT_CONFIG));
+    setOptions({
+      ...DEFAULT_RUN_OPTIONS,
+      // Sample is a public demo; never prompt for Figma/GitHub login.
+      sign_in_before_run: false,
+      figma_sign_in: false,
+      force_reauth: false,
+    });
+    setCheck(null);
+    setResult(null);
+    setError(null);
+    setNotice({
+      title: "Sample study loaded",
+      variant: "info",
+      messages: [
+        SAMPLE_RUN_BLURB,
+        "Review the tasks if you like, then click Open link & run test.",
+      ],
+    });
+    window.requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  };
+
   const handleLoadStudy = (study: SavedStudy) => {
     const wantSignIn = study.options.sign_in_before_run ?? study.options.figma_sign_in ?? false;
     const signIn = interactiveAuthAvailable && wantSignIn;
@@ -229,6 +296,7 @@ export default function App() {
       capture_screenshots: study.options.capture_screenshots,
       sign_in_before_run: signIn,
       figma_sign_in: signIn,
+      force_reauth: study.options.force_reauth ?? false,
     });
     setResult(study.result);
     setCheck(null);
@@ -257,7 +325,11 @@ export default function App() {
     setNotice(null);
     setCheck(null);
     try {
-      setCheck(await api.validate(configForRun(config, options, interactiveAuthAvailable)));
+      setCheck(
+        await api.validate(
+          configForRun(config, options, interactiveAuthAvailable, authSessions),
+        ),
+      );
     } catch (err) {
       setError(describeError(err));
     } finally {
@@ -289,6 +361,7 @@ export default function App() {
         variant: "warn",
         messages: [
           "This page is UI only until a backend is connected. Deploy the API and set VITE_API_BASE, or run the API locally. See HOSTING.md for steps.",
+          "If you already deployed on a free tier, the runner may still be waking up. Wait up to a minute, then use Retry on the health badge.",
         ],
       });
       return;
@@ -316,7 +389,7 @@ export default function App() {
     setRunStartedAt(Date.now());
     try {
       const job = await api.startRun(
-        configForRun(config, options, interactiveAuthAvailable),
+        configForRun(config, options, interactiveAuthAvailable, authSessions),
         options,
       );
       setRunJob(job);
@@ -403,14 +476,19 @@ export default function App() {
         <HealthBadge onHealth={handleHealth} />
       </header>
 
+      <aside className="banner credibility-banner" role="note">
+        <p>{CREDIBILITY_COPY}</p>
+      </aside>
+
       {apiDown && (
         <aside className="banner banner-warn truth-banner" role="status">
           <p>
-            <strong>UI only until the runner is connected.</strong> This GitHub Pages site cannot
-            run Playwright by itself. Health checks and runs will fail until you deploy the API
-            (or run it locally) and point the UI at it.
+            <strong>Waking the runner (free tier may take up to a minute)…</strong> If this host
+            slept after idle time, the first health check can be slow. Use Retry on the badge above,
+            or wait and we will keep polling.
           </p>
           <p className="muted small">
+            If nothing connects after a few minutes, this GitHub Pages site may still need an API.
             Setup steps:{" "}
             <a href={HOSTING_DOCS_URL} target="_blank" rel="noreferrer">
               HOSTING.md
@@ -427,6 +505,9 @@ export default function App() {
         onOptionsChange={setOptions}
         disabled={busy}
         interactiveAuthAvailable={interactiveAuthAvailable}
+        authSessions={authSessions}
+        showSampleCta={showSampleCta}
+        onLoadSample={handleLoadSample}
       />
 
       <StudyDesignQa config={config} options={options} />
@@ -466,14 +547,18 @@ export default function App() {
       <p className="run-bar-hint muted small">
         {apiDown ? (
           <>
-            Primary actions stay off until the runner responds. See{" "}
+            Primary actions stay off until the runner responds. Free tier wake-ups can take up to a
+            minute. See{" "}
             <a href={HOSTING_DOCS_URL} target="_blank" rel="noreferrer">
               HOSTING.md
             </a>
             .
           </>
         ) : !hasPrototypeUrl ? (
-          <>Paste your prototype link above before you can run.</>
+          <>
+            Paste your prototype link above, or click <strong>Try a sample public page</strong> for a
+            guided first run.
+          </>
         ) : (
           <>
             Not sure everything is right? Click <strong>Check my setup</strong> first. It flags
@@ -523,6 +608,12 @@ export default function App() {
 
       {result && (
         <div className="results-shell" ref={resultsRef}>
+          <aside className="banner credibility-banner" role="note">
+            <p>{CREDIBILITY_COPY}</p>
+          </aside>
+
+          <FindingsExportPanel result={result} />
+
           <StudyLibraryPanel
             config={config}
             options={options}

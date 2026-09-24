@@ -56,7 +56,7 @@ simulated-usability-runner/
 
 ### Backend (`app/main.py`)
 
-- `GET /`, `GET /healthz` (includes `interactive_auth_available`, `headless`)
+- `GET /`, `GET /healthz` (includes `interactive_auth_available`, `headless`, `auth_sessions`)
 - `GET /personas/levers`, `GET /personas/segments` (LOB-aware)
 - `POST /validate`
 - **`POST /runs`** (async jobs; primary UI path), `GET /runs/{job_id}`, cancel + auth-complete
@@ -87,7 +87,11 @@ Vite + React app with:
 - async run progress, stop, optional local interactive auth
 - results dashboard, evidence gallery, study library
 - **Study share panel**: shares **setup only** (not results); teammate still needs a connected runner
-- truth banner when `/healthz` fails: UI-only messaging + CTA hard-disabled; `interactiveAuthAvailable` forced false (no “Chrome opens on this computer” on Pages/cloud)
+- **Findings export**: Markdown / JSON download + Slack-friendly “Copy findings summary” after a run
+- **Sample run CTA** when API is healthy and the form has no link
+- Cold-start wake UX + Retry on health failure; credibility banner (not human research / not human NASA TLX)
+- truth banner when `/healthz` fails: wake messaging + CTA hard-disabled; `interactiveAuthAvailable` forced false (no “Chrome opens on this computer” on Pages/cloud)
+- Saved `figma.session.json` / `github.session.json` reported via health; UI reuses them and skips the login popup unless “Sign in again”
 
 ### Hosting
 

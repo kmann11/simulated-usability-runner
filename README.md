@@ -16,9 +16,11 @@
 
 1. **UI:** open the Pages URL above, or run the React app locally (`frontend/`).
 2. **API:** run FastAPI locally, or deploy with Docker / Render Blueprint ([HOSTING.md](HOSTING.md)).
-3. Paste a real prototype link, keep 1–2 traveler types for a first pass, then **Open link & run test**.
+3. Paste a real prototype link (or click **Try a sample public page** for a no-login TodoMVC demo), keep 1–2 traveler types for a first pass, then **Open link & run test**.
 
 Primary run path is **async**: `POST /runs` then poll `GET /runs/{job_id}`. Legacy sync `POST /run` still exists for callers that need it.
+
+**Hosted tip:** free-tier APIs sleep when idle. If health fails, wait up to a minute or use **Retry**; the UI keeps polling. Figma/GitHub Chrome login only works with a local backend (see [HOSTING.md](HOSTING.md)).
 
 ### Local full stack
 
